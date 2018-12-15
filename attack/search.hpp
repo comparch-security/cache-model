@@ -16,6 +16,13 @@ extern bool llc_hit(uint64_t addr);
 extern bool l1_evict(uint32_t id);
 extern bool llc_evict();
 
+extern void
+split_random_set(
+                 std::set<uint64_t> &candidate,   // potential lines for the eviction set
+                 std::set<uint64_t> &picked_set,  // the lines being picked
+                 uint32_t pick                    // number of lines to be picked
+                 );
+
 extern bool
 targeted_evict_probe(
                      L1CacheBase * cache,             // the L1 cache that can be accessed

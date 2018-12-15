@@ -8,7 +8,9 @@ targeted_trim_original(
                        L1CacheBase * cache,             // the L1 cache that can be accessed
                        uint64_t target,                 // the target address to be evicted
                        std::set<uint64_t> &candidate,   // potential lines for the eviction set
-                       hit_func_t hit                   // hit function
+                       hit_func_t hit,                  // hit function
+                       check_func_t check,              // eviction set check function
+                       uint32_t nway                    // number of ways
                        );
 
 

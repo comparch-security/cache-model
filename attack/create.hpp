@@ -14,8 +14,13 @@ void get_random_set(
                     uint64_t max             // the maximam number to be generated
                     )
 {
-  for(uint32_t i=0; i<num; i++)
-    random_set.insert(random_set.begin(), random_uint_uniform(60, 0, max-1));
+  if(max <= num) {
+    for(uint32_t i=0; i<max; i++)
+      random_set.insert(random_set.begin(), i);
+  } else {
+    for(uint32_t i=0; random_set.size()<num; i++)
+      random_set.insert(random_set.begin(), random_uint_uniform(60, 0, max-1));
+  }
 }
 
 typedef std::function<bool(uint32_t, std::set<uint64_t>&)> evict_set_creator_func_t;

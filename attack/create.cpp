@@ -1,8 +1,6 @@
 #include "attack/create.hpp"
 #include "cache/cache.hpp"
 
-#include <iostream>
-
 bool targeted_evict_set_creator(
                                 uint32_t num,
                                 std::set<uint64_t>& candidate,

@@ -24,6 +24,20 @@ bool llc_evict() {
 
 const uint32_t NTrial = 16;
 
+void split_random_set(
+                      std::set<uint64_t> &candidate,
+                      std::set<uint64_t> &picked_set,
+                      uint32_t pick
+                      )
+{
+  std::set<uint32_t> picked_index;
+  get_random_set(picked_index, pick, candidate.size());
+  uint32_t i = 0;
+  for(auto it=candidate.begin(); it != candidate.end(); ++i, ++it)
+    if(picked_index.count(i)) picked_set.insert(*it);
+  for(auto it:picked_set) candidate.erase(it);
+}
+
 bool targeted_evict_probe(
                           L1CacheBase * cache,
                           uint64_t target,
@@ -56,18 +70,11 @@ bool targeted_evict_random_pick(
                                 uint32_t pick
                                 )
 {
-  assert(candidate.size() >= pick);
-  std::set<uint32_t> picked_index;
-  get_random_set(picked_index, pick, candidate.size());
-  uint32_t i = 0;
-  for(auto it=candidate.begin(); it != candidate.end(); ++i, ++it)
-    if(picked_index.count(i)) picked_set.insert(*it);
-  for(auto it:picked_set) candidate.erase(it);
+  split_random_set(candidate, picked_set, pick);
   return targeted_evict_probe(cache, target, candidate, evict_set, hit);
 }
 
 bool l1_evict_check(L1CacheBase *cache, const std::set<uint64_t> &evict_set) {
-  assert(evict_set.size() >= NL1Way + 1);
   auto it = evict_set.begin();
   auto target = *it++;
   std::set<uint64_t> m_evict_set(it, evict_set.end());
@@ -75,13 +82,13 @@ bool l1_evict_check(L1CacheBase *cache, const std::set<uint64_t> &evict_set) {
 }
 
 bool l1_targeted_evict_check(uint64_t target, L1CacheBase *cache, const std::set<uint64_t> &evict_set) {
+  assert(evict_set.size() >= NL1Way);
   auto idx = cache->get_index(target);
   for(auto l:evict_set) if(cache->get_index(l) != idx) return false;
   return true;
 }
 
 bool llc_evict_check(const std::set<uint64_t> &evict_set) {
-  assert(evict_set.size() >= NL1Way + 1);
   auto it = evict_set.begin();
   auto target = *it++;
   std::set<uint64_t> m_evict_set(it, evict_set.end());
@@ -89,6 +96,7 @@ bool llc_evict_check(const std::set<uint64_t> &evict_set) {
 }
 
 bool llc_targeted_evict_check(uint64_t target, const std::set<uint64_t> &evict_set) {
+  assert(evict_set.size() >= NL1Way);
   auto cache = obtain_llc(target);
   auto idx = cache->get_index(target);
   for(auto l:evict_set) if(obtain_llc(l) != cache || cache->get_index(l) != idx) return false;
