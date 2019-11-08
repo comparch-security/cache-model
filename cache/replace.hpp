@@ -2,9 +2,9 @@
 #define CM_REPLACE_HPP_
 
 #include <cstdint>
-#include <map>
+#include <unordered_map>
 #include <list>
-#include <set>
+#include <unordered_set>
 #include "datagen/include/random_generator.h"
 
 ///////////////////////////////////
@@ -19,6 +19,7 @@ public:
   uint32_t virtual replace(uint32_t set) = 0;
   void virtual access(uint32_t set, uint32_t way) = 0;
   void virtual invalid(uint32_t set, uint32_t way) = 0;
+  virtual ~ReplaceFuncBase() {}
 };
 
 ///////////////////////////////////
@@ -34,6 +35,8 @@ public:
   void virtual access(uint32_t set, uint32_t way) {}
   void virtual invalid(uint32_t set, uint32_t way) {}
 
+  virtual ~ReplaceRandom() {}
+
   static ReplaceFuncBase *gen(uint32_t nset, uint32_t nway) {
     return (ReplaceFuncBase *)(new ReplaceRandom(nset, nway));
   }
@@ -45,8 +48,8 @@ public:
 class ReplaceFIFO : public ReplaceFuncBase
 {
 protected:
-  std::map<uint32_t, std::list<uint32_t> > used_map;
-  std::map<uint32_t, std::set<uint32_t> > free_map;
+  std::unordered_map<uint32_t, std::list<uint32_t> > used_map;
+  std::unordered_map<uint32_t, std::unordered_set<uint32_t> > free_map;
 
 public:
 
@@ -77,6 +80,8 @@ public:
     free_map[set].insert(way);
   }
 
+  virtual ~ReplaceFIFO() {}
+
   static ReplaceFuncBase *gen(uint32_t nset, uint32_t nway) {
     return (ReplaceFuncBase *)(new ReplaceFIFO(nset, nway));
   }
@@ -106,6 +111,8 @@ public:
       used_map[set].push_back(way);
     }
   }
+
+  virtual ~ReplaceLRU() {}
 
   static ReplaceFuncBase *gen(uint32_t nset, uint32_t nway) {
     return (ReplaceFuncBase *)(new ReplaceLRU(nset, nway));

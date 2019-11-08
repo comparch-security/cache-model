@@ -6,43 +6,10 @@
 #include <cstring>
 #include <string>
 #include "cache/definitions.hpp"
-#include "cache/cache.hpp"
-#include "cache/memory.hpp"
 #include "cache/replace.hpp"
 #include "cache/index.hpp"
 #include "cache/tag.hpp"
 #include "cache/llchash.hpp"
-#include "util/report.hpp"
-
-// debug related
-//#define DPRINT
-
-#ifdef DPRINT
-
-#include <set>
-#include <iostream>
-
-extern std::set<uint64_t> l1_targets;
-extern std::set<uint64_t> l2_targets;
-
-#endif
-
-
-/////////////////////////////////
-// cache model functions
-
-struct CM
-{
-  static uint64_t normalize(uint64_t addr) { return addr >> 6 << 6; }
-  static bool is_invalid(uint64_t m)       { return (m&0x3) == 0; }
-  static bool is_shared(uint64_t m)        { return (m&0x3) == 1; }
-  static bool is_modified(uint64_t m)      { return (m&0x3) == 2; }
-  static bool is_dirty(uint64_t m)         { return (m&0x4) == 0x4; }
-  static uint64_t to_invalid(uint64_t m)   { return 0; }
-  static uint64_t to_shared(uint64_t m)    { return (m >> 2 << 2) | 1; }
-  static uint64_t to_modified(uint64_t m)  { return (m >> 2 << 2) | 2; }
-  static uint64_t to_dirty(uint64_t m)     { return m | 0x4; }
-};
 
 /////////////////////////////////
 // Base class for all caches
@@ -55,20 +22,23 @@ protected:
   ReplaceFuncBase *replacer;    // generic replace function
   uint64_t *meta;      // metadata array
   uint32_t nset, nway; // number of sets and ways
-  std::string cname;   // name of the cache
+  uint32_t level;      // cache level (L1, L2, L3)
+  int32_t core_id;     // when private, record the core id, -1 means unified (LLC)
+  uint32_t cache_id;   // record the cache id in a core or just cache id when unified (LLC)
 
 public:
   CacheBase(uint32_t nset, uint32_t nway,
             indexer_creator_t ic,
             tagger_creator_t tc,
             replacer_creator_t rc,
-            std::string nm)
+            uint32_t level, int32_t core_id, uint32_t cache_id)
     : indexer(ic(nset)), tagger(tc(nset)), replacer(rc(nset, nway)),
-      nset(nset), nway(nway), cname(nm)
+      nset(nset), nway(nway), level(level), core_id(core_id), cache_id(cache_id)
   {
     size_t s = sizeof(uint64_t)*nset*nway;
     meta = (uint64_t *)malloc(s); memset(meta, 0, s);
   }
+
   virtual ~CacheBase() {
     delete indexer;
     delete tagger;
@@ -76,198 +46,216 @@ public:
     free(meta);
   }
 
-  uint32_t get_index(uint64_t addr) const {
-    return indexer->index(addr);
-  }
-  
-  uint64_t get_meta(uint64_t addr, uint32_t way) const {
-    return meta[nway * get_index(addr) + way];
+  virtual uint32_t get_index(uint32_t *latency, uint64_t addr) { return indexer->index(addr); }
+  uint64_t get_meta(uint32_t idx, uint32_t way) const { return meta[nway * idx + way]; }
+
+  void set_meta(uint32_t idx, uint32_t way, uint64_t m_meta) {
+    meta[nway * idx + way] = m_meta;
   }
 
-  void set_meta(uint64_t addr, uint32_t way, uint64_t m_meta) {
-    meta[nway * get_index(addr) + way] = m_meta;
+  virtual bool hit(uint64_t addr) {
+    uint32_t idx, way;
+    return hit(NULL, addr, &idx, &way);
   }
 
-  uint32_t hit(uint64_t addr) const {
-    for(int i=0; i<nway; i++) {
-      uint64_t meta = get_meta(addr, i);
-      if(tagger->match(meta, addr) && !CM::is_invalid(meta))
-        return (i<<1) | 1;
+  virtual bool hit(uint32_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way) {
+    *idx = get_index(latency, addr);
+    for(unsigned int i=0; i<nway; i++) {
+      uint64_t meta = get_meta(*idx, i);
+      if(tagger->match(meta, addr) && !CM::is_invalid(meta)) {
+        *way = i;
+        return true;
+      }
     }
-    return 0;
+    return false;
   }
 
-  // print the set related to an address
-  void print_set(uint64_t addr) const;
-  void print_line(uint64_t addr) const;
+  virtual uint32_t replace(uint32_t idx)           { return replacer->replace(idx); }
+  virtual void access(uint32_t idx, uint32_t way)  { replacer->access(idx, way);    }
+  virtual void invalid(uint32_t idx, uint32_t way) { replacer->invalid(idx, way);   }
 
+  std::string cache_name() const;
+  virtual void query_block(uint32_t idx, uint32_t way, CBInfo *info) const;
+  virtual void query_set(uint32_t idx, SetInfo *info) const;
+  virtual bool query_coloc(uint64_t addrA, uint64_t addrB);
+  virtual LocInfo query_loc(uint64_t addr);
+
+  static CacheBase *gen(uint32_t nset, uint32_t nway,
+                        indexer_creator_t ic,
+                        tagger_creator_t tc,
+                        replacer_creator_t rc,
+                        uint32_t level,
+                        int32_t core_id,
+                        uint32_t cache_id) {
+    return (CacheBase *)(new CacheBase(nset, nway, ic, tc, rc, level, core_id, cache_id));
+  }
 };
 
-class L1CacheBase;
-class LLCCacheBase;
+/////////////////////////////////
+// Coherent cache base
+class CoherentCache
+{
+protected:
+  uint32_t id;
+  CacheBase *cache;
+  uint32_t level;      // cache level (L1, L2, L3)
+  int32_t core_id;     // when private, record the core id, -1 means unified (LLC)
+  uint32_t cache_id;   // record the cache id in a core or just cache id when unified (LLC)
+
+public:
+  CoherentCache(uint32_t id,
+                uint32_t level,
+                int32_t core_id,
+                uint32_t cache_id,
+                cache_creator_t cc,
+                uint32_t nset,
+                uint32_t nway,
+                indexer_creator_t ic,
+                tagger_creator_t tc,
+                replacer_creator_t rc)
+    : id(id), level(level), core_id(core_id), cache_id(cache_id)
+  {
+    cache = cc(nset, nway, ic, tc, rc, level, core_id, cache_id);
+  }
+
+  virtual ~CoherentCache() {
+    delete cache;
+  }
+
+  bool hit(uint64_t addr) { return cache->hit(addr); }
+  uint32_t get_index(uint64_t addr) { return cache->get_index(NULL, addr); }
+
+  virtual void read(uint32_t *latency, uint64_t addr, uint32_t inner_id) = 0;
+  virtual void write(uint32_t *latency, uint64_t addr, uint32_t inner_id) = 0;
+  virtual void release(uint32_t *latency, uint64_t addr, uint32_t inner_id) = 0;
+  virtual void probe(uint32_t *latency, uint64_t addr, bool invalid) = 0;
+  virtual void query_block(uint32_t idx, uint32_t way, CBInfo *info) const {
+    cache->query_block(idx, way, info);
+  }
+  virtual void query_set(uint32_t idx, SetInfo *info) const {
+    cache->query_set(idx, info);
+  }
+  virtual bool query_hit(uint64_t addr) { return cache->hit(addr); }
+  virtual void query_loc(uint64_t addr, std::list<LocInfo>* locs) = 0;
+
+protected:
+  virtual void replace(uint32_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way) = 0;
+};
+
+class InnerCoherentCache;       // coherent cache on the processor side
+class OuterCoherentCache;       // coherent cache on the memory side
+
+class InnerCoherentCache
+{
+protected:
+  std::vector<CoherentCache *> *outer_caches;
+  LLCHashBase *hasher;
+public:
+  InnerCoherentCache(std::vector<CoherentCache *> *oc, llc_hash_creator_t hc, uint32_t noc)
+    : outer_caches(oc), hasher(hc(noc)) {}
+
+  virtual void outer_read(uint32_t *latency, uint32_t id, uint64_t addr) {
+    (*outer_caches)[hasher->hash(addr)]->read(latency, addr, id);
+  }
+  virtual void outer_write(uint32_t *latency, uint32_t id, uint64_t addr) {
+    (*outer_caches)[hasher->hash(addr)]->write(latency, addr, id);
+  }
+  virtual void outer_release(uint32_t *latency, uint32_t id, uint64_t addr) {
+    (*outer_caches)[hasher->hash(addr)]->release(latency, addr, id);
+  }
+
+  uint32_t oc_hash(uint32_t addr) { return hasher->hash(addr); }
+
+  virtual void outer_query_loc(uint64_t addr, std::list<LocInfo> *locs) {
+    (*outer_caches)[hasher->hash(addr)]->query_loc(addr, locs);
+  }
+
+  virtual ~InnerCoherentCache() { delete hasher; }
+};
+
+class OuterCoherentCache
+{
+protected:
+  std::vector<CoherentCache *> *inner_caches;
+public:
+  OuterCoherentCache(std::vector<CoherentCache *> *ic)
+    : inner_caches(ic) {}
+
+  virtual void inner_probe(uint32_t *latency, uint32_t id, uint64_t addr, uint32_t outer_id, bool invalidate) {
+    for (uint32_t i=0; i<inner_caches->size(); i++)
+      if(id != i || !invalidate) (*inner_caches)[i]->probe(latency, addr, invalidate);
+  }
+
+  virtual ~OuterCoherentCache() {}
+};
 
 /////////////////////////////////
 // Coherent L1 caches
 
-class L1CacheBase : public CacheBase
+class L1CacheBase : public CoherentCache, public InnerCoherentCache
 {
-  uint32_t id;
 public:
-  L1CacheBase(uint32_t id)
-    : CacheBase(NL1Set, NL1Way,
-                l1_indexer_creator,
-                l1_tagger_creator,
-                l1_replacer_creator,
-                "L1#"+std::to_string(id)),
-      id(id) {}
+  L1CacheBase(uint32_t id,
+              int32_t core_id,
+              uint32_t cache_id,
+              cache_creator_t cc,
+              uint32_t nset,
+              uint32_t nway,
+              indexer_creator_t ic,
+              tagger_creator_t tc,
+              replacer_creator_t rc,
+              std::vector<CoherentCache *> *ocs,
+              llc_hash_creator_t hc,
+              uint32_t noc)
+    : CoherentCache(id, 1, core_id, cache_id, cc, nset, nway, ic, tc, rc),
+      InnerCoherentCache(ocs, hc, noc) {}
 
-  void read(uint64_t addr) {
-    addr = CM::normalize(addr);
-    uint32_t way = hit(addr);
-    if(!way) way = fetch_read(addr);
-    else way >>= 1;
-    replacer->access(get_index(addr), way);
-    REPORT::access_l1(addr, get_index(addr), way, id);
-#ifdef DPRINT
-    if(l1_targets.count(addr)) {
-      std::cout << std::hex << "L1(" << id << ") read " << addr << std::endl;
-      print_set(addr);
-    }
-#endif
-  }
+  virtual ~L1CacheBase() { }
 
-  void write(uint64_t addr) {
-    addr = CM::normalize(addr);
-    uint32_t way = hit(addr);
-    if(!way)
-      way = fetch_write(addr, false);
-    else if(!CM::is_modified(get_meta(addr, way >> 1)))
-      way = fetch_write(addr, true);
-    else
-      way >>= 1;
-    replacer->access(indexer->index(addr), way);
-    REPORT::access_l1(addr, get_index(addr), way, id);
-#ifdef DPRINT
-    if(l1_targets.count(addr)) {
-      std::cout << std::hex << "L1(" << id << ") write " << addr << std::endl;
-      print_set(addr);
-    }
-#endif
-  }
+  virtual void read(uint32_t *latency, uint64_t addr, uint32_t inner_id);
+  virtual void write(uint32_t *latency, uint64_t addr, uint32_t inner_id);
+  // L1 cache do not support release()
+  virtual void release(uint32_t *latency, uint64_t addr, uint32_t inner_id) {}
+  virtual void probe(uint32_t *latency, uint64_t addr, bool invalid);
 
-  void probe(uint64_t addr, bool invalid);
+  void read(uint64_t addr)  { read(NULL, addr, 0);  }
+  void write(uint64_t addr) { write(NULL, addr, 0); }
 
-private:
-  uint32_t fetch_read(uint64_t addr);
-  uint32_t fetch_write(uint64_t addr, bool perm_only);
-  uint32_t replace(uint64_t addr);
+  virtual void query_loc(uint64_t addr, std::list<LocInfo> *locs);
 
+protected:
+  virtual void replace(uint32_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way);
 };
 
 /////////////////////////////////
 // Coherent LLC(L2) caches
 
-class LLCCacheBase : public CacheBase
+class LLCCacheBase : public CoherentCache, public OuterCoherentCache
 {
-  uint64_t *data;   // data array
-  uint32_t id;
 public:
-  LLCCacheBase(uint32_t id)
-    : CacheBase(NLLCSet, NLLCWay,
-                llc_indexer_creator,
-                llc_tagger_creator,
-                llc_replacer_creator,
-                "LLC#"+std::to_string(id)),
-      id(id)
-  {
-    size_t s = sizeof(uint64_t)*nset*nway;
-    data = (uint64_t *)malloc(s); memset(data, 0, s);
-  }
+  LLCCacheBase(uint32_t id,
+               cache_creator_t cc,
+               uint32_t nset,
+               uint32_t nway,
+               indexer_creator_t ic,
+               tagger_creator_t tc,
+               replacer_creator_t rc,
+               std::vector<CoherentCache *> *ics)
+    : CoherentCache(id, 2, -1, id, cc, nset, nway, ic, tc, rc),
+      OuterCoherentCache(ics) {}
 
-  virtual ~LLCCacheBase() {
-    free(data);
-  }
+  virtual ~LLCCacheBase() { }
 
-  void fetch_read(uint64_t addr, uint32_t l1_id) {
-    uint32_t way = hit(addr);
-    if(way) { // hit
-      way >>= 1;
-      if(CM::is_modified(get_meta(addr, way))) {
-        probe(addr, l1_id, false);
-        set_meta(addr, way, CM::to_dirty(get_meta(addr, way)));
-      }
-    } else {  //miss
-      extern_mem->read(addr, id);
-      way = replace(addr);
-      set_meta(addr, way, CM::to_shared(addr));
-    }
-    replacer->access(get_index(addr), way);
-    REPORT::access_llc(addr, get_index(addr), way, id);
+  virtual void read(uint32_t *latency, uint64_t addr, uint32_t inner_id);
+  virtual void write(uint32_t *latency, uint64_t addr, uint32_t inner_id);
+  virtual void release(uint32_t *latency, uint64_t addr, uint32_t inner_id);
+  // LLC does not support probe
+  virtual void probe(uint32_t *latency, uint64_t addr, bool invalid) { }
 
-#ifdef DPRINT
-      if(l2_targets.count(addr)) {
-        std::cout << std::hex << "L2(" << id << ") fetch to read " << addr << std::endl;
-        print_set(addr);
-      }
-#endif
-  }
+  virtual void query_loc(uint64_t addr, std::list<LocInfo> *locs);
 
-  void fetch_write(uint64_t addr, uint32_t l1_id) {
-    uint32_t way = hit(addr);
-    if(way) { // hit
-      way >>= 1;
-      if(CM::is_shared(get_meta(addr, way))) {
-        probe(addr, l1_id, true);
-        set_meta(addr, way, CM::to_modified(get_meta(addr, way)));
-      }
-    } else {  //miss
-      extern_mem->read(addr, id);
-      way = replace(addr);
-      set_meta(addr, way, CM::to_modified(addr));
-    }
-    replacer->access(get_index(addr), way);
-    REPORT::access_llc(addr, get_index(addr), way, id);
-
-#ifdef DPRINT
-      if(l2_targets.count(addr)) {
-        std::cout << std::hex << "L2(" << id << ") fetch to write " << addr << std::endl;
-        print_set(addr);
-      }
-#endif
-  }
-
-  void release(uint64_t addr, uint32_t l1_id) {
-    uint32_t way = hit(addr);
-    if(way) { //hit
-      way >>= 1;
-      uint64_t meta = get_meta(addr, way);
-      meta = CM::to_shared(meta);
-      meta = CM::to_dirty(meta);
-      set_meta(addr, way, meta);
-    } else { // miss
-      // should never went here
-#ifdef DPRINT
-      std::cout << std::hex << "L2(" << id << ") release " << addr << " but MISSED!" << std::endl;
-      print_set(addr);
-#endif
-      throw(addr);
-    }
-    replacer->access(get_index(addr), way);
-    REPORT::access_llc(addr, get_index(addr), way, id);
-
-#ifdef DPRINT
-      if(l2_targets.count(addr)) {
-        std::cout << std::hex << "L2(" << id << ") release " << addr << std::endl;
-        print_set(addr);
-      }
-#endif
-  }
-
-private:
-
-  uint32_t replace(uint64_t addr);
-  void probe(uint64_t addr, uint32_t l1_id, bool invalid);
-
+protected:
+  virtual void replace(uint32_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way);
 };
 
 #endif

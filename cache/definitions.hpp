@@ -6,9 +6,8 @@
 #include <functional>
 
 //declarations
-class Memory;
-class L1CacheBase;
-class LLCCacheBase;
+class CacheBase;
+class CoherentCache;
 
 class IndexFuncBase;
 class TagFuncBase;
@@ -19,36 +18,36 @@ typedef std::function<IndexFuncBase *(uint32_t)> indexer_creator_t;
 typedef std::function<TagFuncBase *(uint32_t)> tagger_creator_t;
 typedef std::function<ReplaceFuncBase *(uint32_t, uint32_t)> replacer_creator_t;
 typedef std::function<LLCHashBase *(uint32_t)> llc_hash_creator_t;
-
-// global cache configuration
-#define NL1 4
-#define NL1Set 64
-#define NL1Way 8
-#define NL1WRTI 6
-
-#define NLLC 1
-#define NLLCSet 1024
-#define NLLCWay 16
-#define NLLCWRTI 10
-
-// probe parameters
-extern uint32_t ProbeCycle;
-extern uint32_t ProbeWrite;
-extern uint32_t ProbeThreshold;
-extern uint32_t SearchMaxIteration;
+typedef std::function<CacheBase *(uint32_t, uint32_t, indexer_creator_t, tagger_creator_t,
+                                  replacer_creator_t, uint32_t, int32_t, uint32_t)> cache_creator_t;
 
 // global data structure
-extern Memory *extern_mem;                       // memory backend
-extern std::vector<L1CacheBase *> l1_caches;     // list of L1 caches
-extern std::vector<LLCCacheBase *> llc_caches;   // list of LLCs
+extern std::vector<CoherentCache *> l1_caches;     // list of L1 caches
+extern std::vector<CoherentCache *> llc_caches;   // list of LLCs
 
-extern LLCHashBase *llc_hasher;                  // the hash used in LLC
+// event tracer
+class Reporter_t;
+extern Reporter_t reporter;
 
-extern indexer_creator_t  l1_indexer_creator;   // factory function to create the L1 indexer
-extern tagger_creator_t   l1_tagger_creator;    // factory function to create the L1 tagger
-extern replacer_creator_t l1_replacer_creator;  // factory function to create the L1 replacer
-extern indexer_creator_t  llc_indexer_creator;  // factory function to create the LLC indexer
-extern tagger_creator_t   llc_tagger_creator;   // factory function to create the LLC tagger
-extern replacer_creator_t llc_replacer_creator; // factory function to create the LLC replacer
+/////////////////////////////////
+// cache model functions
+
+struct CM
+{
+  static uint64_t normalize(uint64_t addr) { return addr >> 6 << 6; }
+  static bool is_invalid(uint64_t m)       { return (m&0x3) == 0; }
+  static bool is_shared(uint64_t m)        { return (m&0x3) == 1; }
+  static bool is_modified(uint64_t m)      { return (m&0x3) == 2; }
+  static bool is_dirty(uint64_t m)         { return (m&0x4) == 0x4; }
+  static uint64_t to_invalid(uint64_t m)   { return 0; }
+  static uint64_t to_shared(uint64_t m)    { return (m >> 2 << 2) | 1; }
+  static uint64_t to_modified(uint64_t m)  { return (m >> 2 << 2) | 2; }
+  static uint64_t to_dirty(uint64_t m)     { return m | 0x4; }
+};
+
+// query
+class CBInfo;
+class SetInfo;
+class LocInfo;
 
 #endif

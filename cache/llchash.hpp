@@ -2,6 +2,7 @@
 #define CM_LLCHASH_HPP_
 
 #include <cstdint>
+#include <unordered_map>
 
 /////////////////////////////////
 // base class
@@ -12,7 +13,8 @@ protected:
   uint32_t nllc;
 public:
   LLCHashBase(uint32_t nllc) : nllc(nllc) {}
-  uint32_t virtual hash(uint64_t addr) = 0;
+  virtual uint32_t hash(uint64_t addr) = 0;
+  virtual ~LLCHashBase() {}
 };
 
 /////////////////////////////////
@@ -22,7 +24,8 @@ class LLCHashNorm : public LLCHashBase
 {
 public:
   LLCHashNorm(uint32_t nllc) : LLCHashBase(nllc) {}
-  uint32_t virtual hash(uint64_t addr) { return (addr >> 6) % nllc; }
+  virtual uint32_t hash(uint64_t addr) { return (addr >> 6) % nllc; }
+  virtual ~LLCHashNorm() {}
   static LLCHashBase *gen(uint32_t nllc) {
     return (LLCHashBase *)(new LLCHashNorm(nllc));
   }
@@ -42,10 +45,11 @@ class LLCHashHash : public LLCHashBase
     return rv;
   }
 
-  std::map<uint64_t, uint32_t> hash_cache;
+  std::unordered_map<uint64_t, uint32_t> hash_cache;
   
 public:
   LLCHashHash(uint32_t nllc) : LLCHashBase(nllc) {}
+
   uint32_t virtual hash(uint64_t addr) {
     uint32_t rv = 0;
     if(hash_cache.count(addr)) return hash_cache[addr];
@@ -70,6 +74,10 @@ public:
     return rv;
   }
     
+  virtual ~LLCHashHash() {}
+  static LLCHashBase *gen(uint32_t nllc) {
+    return (LLCHashBase *)(new LLCHashHash(nllc));
+  }
 };
 
 
