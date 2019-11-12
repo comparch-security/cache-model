@@ -161,11 +161,23 @@ public:
   }
 };
 
+class DBAddrTraceType : public CacheDB<bool> {
+public:
+  virtual ~DBAddrTraceType() {}
+  virtual void report(std::string msg, uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way, uint32_t state) {
+    auto fmt = boost::format("0x%016x ") % addr;
+    std::cout << fmt.str();
+    fmt = boost::format(msg + " at level %1% core %2% cache %3% set %4% way %5% [%6%]") % level % core_id % cache_id % idx % way % state;
+    std::cout << fmt.str() << std::endl;
+  }
+};
+
 class Reporter_t
 {
   std::unordered_map<uint64_t, DBAccType>   acc_dbs;     // record various access numbers
   std::unordered_map<uint64_t, DBAddrType>  addr_dbs;    // record the set/way pairs of an addr in a cache
   std::unordered_map<uint64_t, DBStateType> state_dbs;   // record the coherent status of something
+  DBAddrTraceType                           addr_traces; // trace a group of specific address of interests
 
   inline uint64_t hash(uint32_t level) const {
     return (uint64_t)(level)<<56;
@@ -278,14 +290,20 @@ public:
     db_type[2] = true;
   }
 
+  void register_address_tracer(uint64_t addr) {
+    addr_traces.set(addr, true);
+  }
+
   // clear recorders
-  void clear_acc_dbs()    { acc_dbs.clear();   db_type[0] = false; }
-  void clear_addr_dbs()   { addr_dbs.clear();  db_type[1] = false; }
-  void clear_state_dbs()  { state_dbs.clear(); db_type[2] = false; }
+  void clear_acc_dbs()     { acc_dbs.clear();   db_type[0] = false; }
+  void clear_addr_dbs()    { addr_dbs.clear();  db_type[1] = false; }
+  void clear_state_dbs()   { state_dbs.clear(); db_type[2] = false; }
+  void clear_addr_traces() { addr_traces.clear();                   }
   void clear() {
     clear_acc_dbs();
     clear_addr_dbs();
     clear_state_dbs();
+    clear_addr_traces();
     db_depth = std::vector<bool>(4, false);
   }
 
@@ -314,6 +332,9 @@ public:
       uint64_t id = hash(level, core_id, cache_id, idx);
       if(db_type[0]) acc_dbs[id].access(record);
     }
+    if(addr_traces.hit(addr)) {
+      addr_traces.report("is accessed", level, core_id, cache_id, addr, idx, way, state);
+    }
   }
 
   void cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way) {
@@ -336,6 +357,9 @@ public:
     if(db_depth[3]) {
       uint64_t id = hash(level, core_id, cache_id, idx);
       if(db_type[0]) acc_dbs[id].evict(record);
+    }
+    if(addr_traces.hit(addr)) {
+      addr_traces.report("is evicted", level, core_id, cache_id, addr, idx, way, 0);
     }
   }
 
