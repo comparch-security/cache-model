@@ -181,9 +181,9 @@ public:
   OuterCoherentCache(std::vector<CoherentCache *> *ic)
     : inner_caches(ic) {}
 
-  virtual void inner_probe(uint32_t *latency, uint32_t id, uint64_t addr, uint32_t outer_id, bool invalidate) {
+  virtual void inner_probe(uint32_t *latency, uint32_t id, uint64_t addr, uint32_t outer_id, bool invalidate, bool all) {
     for (uint32_t i=0; i<inner_caches->size(); i++)
-      if(id != i || !invalidate) (*inner_caches)[i]->probe(latency, addr, invalidate);
+      if(id != i || all) (*inner_caches)[i]->probe(latency, addr, invalidate);
   }
 
   virtual ~OuterCoherentCache() {}

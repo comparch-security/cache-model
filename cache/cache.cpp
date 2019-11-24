@@ -43,7 +43,7 @@ void L1CacheBase::read(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
   uint32_t idx, way;
   if(!cache->hit(latency, addr, &idx, &way)) {
     replace(latency, addr, &idx, &way);
-    outer_read(latency, id, addr);
+    if(outer_caches) outer_read(latency, id, addr);
     cache->set_meta(idx, way, CM::to_shared(addr));
   }
   cache->access(idx, way);
@@ -55,10 +55,10 @@ void L1CacheBase::write(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
   uint32_t idx, way;
   if(!cache->hit(latency, addr, &idx, &way)) {
     replace(latency, addr, &idx, &way);
-    outer_write(latency, id, addr);
+    if(outer_caches) outer_write(latency, id, addr);
     cache->set_meta(idx, way, CM::to_modified(addr));
   } else if(!CM::is_modified(cache->get_meta(idx, way))) {
-    outer_write(latency, id, addr);
+    if(outer_caches) outer_write(latency, id, addr);
     cache->set_meta(idx, way, CM::to_modified(addr));
   }
   cache->access(idx, way);
@@ -71,7 +71,7 @@ void L1CacheBase::probe(uint32_t *latency, uint64_t addr, bool invalid) {
     uint64_t meta = cache->get_meta(idx, way);
 
     if(CM::is_modified(meta))
-      outer_release(latency, id, addr);
+      if(outer_caches) outer_release(latency, id, addr);
 
     if(invalid) {
       cache->set_meta(idx, way, CM::to_invalid(meta));
@@ -86,7 +86,7 @@ void L1CacheBase::probe(uint32_t *latency, uint64_t addr, bool invalid) {
 }
 
 void L1CacheBase::query_loc(uint64_t addr, std::list<LocInfo> *locs) {
-  outer_query_loc(addr, locs);
+  if(outer_caches) outer_query_loc(addr, locs);
   locs->push_front(cache->query_loc(addr));
 }
 
@@ -97,7 +97,7 @@ void L1CacheBase::replace(uint32_t *latency, uint64_t addr, uint32_t *idx, uint3
   uint64_t rep_addr = CM::normalize(meta);   // we know meta has the full address except for the lowest 6 bits
 
   if(CM::is_modified(meta))
-    outer_release(latency, id, rep_addr);
+    if(outer_caches) outer_release(latency, id, rep_addr);
 
   if(!CM::is_invalid(meta)) {
     cache->invalid(*idx, *way);
@@ -109,7 +109,7 @@ void LLCCacheBase::read(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
   uint32_t idx, way;
   if(cache->hit(latency, addr, &idx, &way)) { // hit
     if(CM::is_modified(cache->get_meta(idx, way))) {
-      inner_probe(latency, id, addr, inner_id, false);
+      inner_probe(latency, id, addr, inner_id, false, false);
       cache->set_meta(idx, way, CM::to_shared(cache->get_meta(idx, way)));
     }
   } else {  //miss
@@ -124,7 +124,7 @@ void LLCCacheBase::write(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
   uint32_t idx, way;
   if(cache->hit(latency, addr, &idx, &way)) { // hit
     if(CM::is_shared(cache->get_meta(idx, way))) {
-      inner_probe(latency, id, addr, inner_id, true);
+      inner_probe(latency, id, addr, inner_id, true, false);
       cache->set_meta(idx, way, CM::to_modified(cache->get_meta(idx, way)));
     }
   } else {  //miss
@@ -160,7 +160,7 @@ void LLCCacheBase::replace(uint32_t *latency, uint64_t addr, uint32_t *idx, uint
   uint64_t meta = cache->get_meta(*idx, *way);
   uint64_t rep_addr = CM::normalize(meta); // we know meta has the full address except for the lowest 6 bits
   if(!CM::is_invalid(meta)) {
-    inner_probe(latency, id, rep_addr, -1, true);
+    inner_probe(latency, id, rep_addr, -1, true, true);
     cache->invalid(*idx, *way);
     reporter.cache_evict(level, core_id, cache_id, rep_addr, *idx, *way);
   }
