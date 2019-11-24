@@ -1,4 +1,12 @@
 *~
 *.gch
 *.o
+*.a
 *.so
+*.ps
+*.pdf
+
+test/*
+!test/*.*
+
+octave-workspace
