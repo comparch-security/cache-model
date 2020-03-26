@@ -55,8 +55,8 @@ public:
 };
 
 extern bool query_hit(uint64_t addr, CacheBase *cache);
-extern uint32_t query_coloc(uint64_t addr, CacheBase *cache, std::unordered_set<uint64_t> evset);
-extern bool query_check(uint64_t addr, CacheBase *cache, std::unordered_set<uint64_t> evset);
+extern uint32_t query_coloc(uint64_t addr, CacheBase *cache, std::list<uint64_t> evset);
+extern bool query_check(uint64_t addr, CacheBase *cache, std::list<uint64_t> evset);
 
 extern void print_locs(const std::list<LocInfo> &locs, uint32_t indent = 0);
 

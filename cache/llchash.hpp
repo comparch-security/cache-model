@@ -1,8 +1,9 @@
 #ifndef CM_LLCHASH_HPP_
 #define CM_LLCHASH_HPP_
 
-#include <cstdint>
 #include <unordered_map>
+#include <functional>
+#include <cassert>
 
 /////////////////////////////////
 // base class
@@ -26,8 +27,12 @@ public:
   LLCHashNorm(uint32_t nllc) : LLCHashBase(nllc) {}
   virtual uint32_t hash(uint64_t addr) { return (addr >> 6) % nllc; }
   virtual ~LLCHashNorm() {}
-  static LLCHashBase *gen(uint32_t nllc) {
+  static LLCHashBase *factory(uint32_t nllc) {
     return (LLCHashBase *)(new LLCHashNorm(nllc));
+  }
+  static llc_hash_creator_t gen() {
+    using namespace std::placeholders;
+    return std::bind(factory, _1);
   }
 };
 
@@ -67,7 +72,8 @@ public:
             addr_xor(0x1b5f575400, addr);
       break;
     default:
-      std::cout << "LLCHash: unsupport number of LLCs!";
+      //std::cout << "LLCHash: unsupport number of LLCs!";
+      assert(0 == "LLCHash: unsupport number of LLCs!");
       return 0xffff;
     }
     hash_cache[addr] = rv;
@@ -75,10 +81,13 @@ public:
   }
     
   virtual ~LLCHashHash() {}
-  static LLCHashBase *gen(uint32_t nllc) {
+  static LLCHashBase *factory(uint32_t nllc) {
     return (LLCHashBase *)(new LLCHashHash(nllc));
   }
+  static llc_hash_creator_t gen() {
+    using namespace std::placeholders;
+    return std::bind(factory, _1);
+  }
 };
-
 
 #endif

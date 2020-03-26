@@ -1,0 +1,19 @@
+{
+    "config": {
+        "default": "list",
+        "strategy": "strategy",
+        "list": "list",
+        "round": "round"
+    },
+    "strategy": {
+        "traverse_type": "strategy",
+        "ntests": 1,
+        "ntraverse": 1,
+        "threshold": 0,
+        "window": 1,
+        "repeat": 1,
+        "step": 1
+    },
+    "list":  { "base": "strategy", "traverse_type": "list"},
+    "round": { "base": "strategy", "traverse_type": "round"}
+}

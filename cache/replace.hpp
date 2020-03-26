@@ -1,26 +1,28 @@
 #ifndef CM_REPLACE_HPP_
 #define CM_REPLACE_HPP_
 
-#include <cstdint>
 #include <unordered_map>
 #include <list>
 #include <vector>
 #include <unordered_set>
 #include <functional>
-#include "datagen/include/random_generator.h"
+#include "util/random.hpp"
 
 ///////////////////////////////////
 // Base class
 
-class ReplaceFuncBase
+class ReplaceFuncBase : public DelaySim
 {
 protected:
   uint32_t nset, nway;
 public:
-  ReplaceFuncBase(uint32_t nset, uint32_t nway) : nset(nset), nway(nway) {}
-  virtual uint32_t replace(uint32_t set) = 0;
+  ReplaceFuncBase(uint32_t nset, uint32_t nway, uint32_t delay)
+    : DelaySim(delay), nset(nset), nway(nway) {}
+  virtual uint32_t replace(uint64_t *latency, uint32_t set) = 0;
   virtual void access(uint32_t set, uint32_t way) = 0;
   virtual void invalid(uint32_t set, uint32_t way) = 0;
+  virtual std::string to_string(uint32_t set) const = 0;
+  virtual std::string to_string() const = 0;
   virtual ~ReplaceFuncBase() {}
 };
 
@@ -29,18 +31,40 @@ public:
 
 class ReplaceRandom : public ReplaceFuncBase
 {
+  std::unordered_map<uint32_t, std::unordered_set<uint32_t> > free_map;
 public:
-  ReplaceRandom(uint32_t nset, uint32_t nway) : ReplaceFuncBase(nset, nway) {}
-  virtual uint32_t replace(uint32_t set){
-    return (uint32_t)random_uint_uniform(31, 0, nway-1);
+  ReplaceRandom(uint32_t nset, uint32_t nway, uint32_t delay) : ReplaceFuncBase(nset, nway, delay) {}
+  virtual uint32_t replace(uint64_t *latency, uint32_t set){
+    latency_acc(latency);
+    if(!free_map.count(set))
+      for(uint32_t i=0; i<nway; i++) free_map[set].insert(i);
+
+    if(free_map[set].size() > 0)
+      return *(free_map[set].begin());
+    else
+      return (uint32_t)get_random_uint64(nway);
   }
-  virtual void access(uint32_t set, uint32_t way) {}
-  virtual void invalid(uint32_t set, uint32_t way) {}
+  virtual void access(uint32_t set, uint32_t way) {
+    if(free_map[set].count(way))
+      free_map[set].erase(way);
+  }
+  virtual void invalid(uint32_t set, uint32_t way) {
+    free_map[set].insert(way);
+  }
+
+  // there is not need to print for random replacement
+  virtual std::string to_string(uint32_t set) const { return std::string(); }
+  virtual std::string to_string() const { return std::string(); }
 
   virtual ~ReplaceRandom() {}
 
-  static ReplaceFuncBase *gen(uint32_t nset, uint32_t nway) {
-    return (ReplaceFuncBase *)(new ReplaceRandom(nset, nway));
+  static ReplaceFuncBase *factory(uint32_t nset, uint32_t nway, uint32_t delay) {
+    return (ReplaceFuncBase *)(new ReplaceRandom(nset, nway, delay));
+  }
+
+  static replacer_creator_t gen(uint32_t delay = 0) {
+    using namespace std::placeholders;
+    return std::bind(factory, _1, _2, delay);
   }
 };
 
@@ -55,9 +79,10 @@ protected:
 
 public:
 
-  ReplaceFIFO(uint32_t nset, uint32_t nway) : ReplaceFuncBase(nset, nway) {}
+  ReplaceFIFO(uint32_t nset, uint32_t nway, uint32_t delay) : ReplaceFuncBase(nset, nway, delay) {}
 
-  virtual uint32_t replace(uint32_t set) {
+  virtual uint32_t replace(uint64_t *latency, uint32_t set) {
+    latency_acc(latency);
     if(!free_map.count(set))
       for(uint32_t i=0; i<nway; i++) free_map[set].insert(i);
 
@@ -79,12 +104,18 @@ public:
     free_map[set].insert(way);
   }
 
+  virtual std::string to_string(uint32_t set) const;
+  virtual std::string to_string() const;
   virtual ~ReplaceFIFO() {}
 
-  static ReplaceFuncBase *gen(uint32_t nset, uint32_t nway) {
-    return (ReplaceFuncBase *)(new ReplaceFIFO(nset, nway));
+  static ReplaceFuncBase *factory(uint32_t nset, uint32_t nway, uint32_t delay) {
+    return (ReplaceFuncBase *)(new ReplaceFIFO(nset, nway, delay));
   }
 
+  static replacer_creator_t gen(uint32_t delay = 0) {
+    using namespace std::placeholders;
+    return std::bind(factory, _1, _2, delay);
+  }
 };
 
 
@@ -95,7 +126,7 @@ class ReplaceLRU : public ReplaceFIFO
 {
 public:
 
-  ReplaceLRU(uint32_t nset, uint32_t nway) : ReplaceFIFO(nset, nway) {}
+  ReplaceLRU(uint32_t nset, uint32_t nway, uint32_t delay) : ReplaceFIFO(nset, nway, delay) {}
  
   virtual void access(uint32_t set, uint32_t way) {
     if(free_map[set].count(way)) {
@@ -109,10 +140,14 @@ public:
 
   virtual ~ReplaceLRU() {}
 
-  static ReplaceFuncBase *gen(uint32_t nset, uint32_t nway) {
-    return (ReplaceFuncBase *)(new ReplaceLRU(nset, nway));
+  static ReplaceFuncBase *factory(uint32_t nset, uint32_t nway, uint32_t delay) {
+    return (ReplaceFuncBase *)(new ReplaceLRU(nset, nway, delay));
   }
 
+  static replacer_creator_t gen(uint32_t delay = 0) {
+    using namespace std::placeholders;
+    return std::bind(factory, _1, _2, delay);
+  }
 };
 
 ///////////////////////////////////
@@ -128,10 +163,11 @@ protected:
   uint32_t rrpv_max;
 
 public:
-  ReplaceRRIP(uint32_t nset, uint32_t nway, uint32_t width)
-  : ReplaceFuncBase(nset, nway), rrpv_max(1<<width) {}
+  ReplaceRRIP(uint32_t nset, uint32_t nway, uint32_t width, uint32_t delay)
+    : ReplaceFuncBase(nset, nway, delay), rrpv_max(1<<width) {}
 
-  virtual uint32_t replace(uint32_t set) {
+  virtual uint32_t replace(uint64_t *latency, uint32_t set) {
+    latency_acc(latency);
     if(!rrpv_map.count(set))
       rrpv_map[set] = std::vector<uint32_t>(nway, rrpv_max);
 
@@ -159,14 +195,17 @@ public:
       rrpv_map[set][way] = rrpv_max;
   }
 
+  virtual std::string to_string(uint32_t set) const;
+  virtual std::string to_string() const;
   virtual ~ReplaceRRIP() {}
 
-  static ReplaceFuncBase *factory(uint32_t nset, uint32_t nway, uint32_t width) {
-    return (ReplaceFuncBase *)(new ReplaceRRIP(nset, nway, width));
+  static ReplaceFuncBase *factory(uint32_t nset, uint32_t nway, uint32_t width, uint32_t delay) {
+    return (ReplaceFuncBase *)(new ReplaceRRIP(nset, nway, width, delay));
   }
 
-  static replacer_creator_t gen(uint32_t width) {
-    return std::bind(factory, std::placeholders::_1, std::placeholders::_2, width);
+  static replacer_creator_t gen(uint32_t width, uint32_t delay = 0) {
+    using namespace std::placeholders;
+    return std::bind(factory, _1, _2, width, delay);
   }
 };
 

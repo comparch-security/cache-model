@@ -18,12 +18,11 @@ typedef std::function<IndexFuncBase *(uint32_t)> indexer_creator_t;
 typedef std::function<TagFuncBase *(uint32_t)> tagger_creator_t;
 typedef std::function<ReplaceFuncBase *(uint32_t, uint32_t)> replacer_creator_t;
 typedef std::function<LLCHashBase *(uint32_t)> llc_hash_creator_t;
-typedef std::function<CacheBase *(uint32_t, uint32_t, indexer_creator_t, tagger_creator_t,
-                                  replacer_creator_t, uint32_t, int32_t, uint32_t)> cache_creator_t;
+typedef std::function<CacheBase *(uint32_t, int32_t, uint32_t)> cache_creator_t;
 
 // global data structure
 extern std::vector<CoherentCache *> l1_caches;     // list of L1 caches
-extern std::vector<CoherentCache *> llc_caches;   // list of LLCs
+extern std::vector<CoherentCache *> llc_caches;    // list of LLCs
 
 // event tracer
 class Reporter_t;

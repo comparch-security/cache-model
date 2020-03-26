@@ -1,7 +1,6 @@
 #ifndef CM_TAG_HPP_
 #define CM_TAG_HPP_
 
-#include <cstdint>
 #include <cmath>
 
 #define CLog2(x) (uint32_t)(log2((float)(x)))
@@ -33,10 +32,14 @@ public:
 
   virtual ~TagNorm() {}
 
-  static TagFuncBase *gen(uint32_t nset) {
+  static TagFuncBase *factory(uint32_t nset) {
     return (TagFuncBase *)(new TagNorm(nset));
   }
 
+  static tagger_creator_t gen() {
+    using namespace std::placeholders;
+    return std::bind(factory, _1);
+  }
 };
 
 #undef CLog2

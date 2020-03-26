@@ -51,13 +51,13 @@ bool query_hit(uint64_t addr, CacheBase *cache) {
   return cache->hit(addr);
 }
 
-uint32_t query_coloc(uint64_t addr, CacheBase *cache, std::unordered_set<uint64_t> evset) {
+uint32_t query_coloc(uint64_t addr, CacheBase *cache, std::list<uint64_t> evset) {
   uint32_t rv = 0;
   for(auto a:evset) if(cache->query_coloc(addr, a)) rv++;
   return rv;
 }
 
-bool query_check(uint64_t addr, CacheBase *cache, std::unordered_set<uint64_t> evset) {
+bool query_check(uint64_t addr, CacheBase *cache, std::list<uint64_t> evset) {
   for(auto a:evset) if(!cache->query_coloc(addr, a)) return false;
   return true;
 }

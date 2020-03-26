@@ -1,40 +1,22 @@
 #include "attack/create.hpp"
 #include "cache/cache.hpp"
-
-bool targeted_evict_set_creator(
-                                uint32_t num,
-                                std::unordered_set<uint64_t>& candidate,
-                                L1CacheBase * cache,
-                                uint64_t target,
-                                uint32_t cycle,
-                                uint32_t write,
-                                uint32_t threshold,
-                                hit_func_t hit
-                                )
-{
-  std::unordered_set<uint64_t> empty_set;
-  get_random_set(candidate, num, 1ll << 60);
-  return targeted_evict_probe(cache, target, candidate, empty_set, cycle, write, threshold, hit);
-}
+#include "util/random.hpp"
 
 bool obtain_targeted_evict_set(
                                uint32_t num,
-                               std::unordered_set<uint64_t>& candidate,
+                               std::list<uint64_t>& candidate,
                                L1CacheBase * cache,
                                uint64_t target,
-                               uint32_t cycle,
-                               uint32_t write,
-                               uint32_t threshold,
-                               hit_func_t hit,
+                               traverse_test_t traverse,
                                uint32_t trial
                                )
 {
-  uint32_t count = 0;
-  while(!targeted_evict_set_creator(num, candidate, cache, target, cycle, write, threshold, hit)) {
+  for(int i=0; trial==0 || i<trial; i++) {
     candidate.clear();
-    if(trial == 0 || count < trial) count++;
-    else return false;
+    get_random_list(candidate, num, 1ull << 60);
+    if(traverse(cache, candidate, target))
+      return true;
   }
-  return true; 
+  return false;
 }
 

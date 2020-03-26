@@ -1,0 +1,92 @@
+{
+    "config": {
+        "default" : ["1x64x8", "1x1024x16"],
+        "L1_32x8" : ["1x32x8"],
+        "L1_32x8_RRIP" : ["RRIP_1x32x8"],
+        "L1_64x4" : ["1x64x4"],
+        "L1_64x8" : ["1x64x8"],
+        "L2_512x16"  : ["1x64x8", "1x512x16"],
+        "L2_1024x8"  : ["1x64x8", "1x1024x8"],
+        "L2_1024x12" : ["1x64x8", "1x1024x12"],
+        "L2_1024x16" : ["1x64x8", "1x1024x16"],
+        "L2_1024x20" : ["1x64x8", "1x1024x20"],
+        "L2_2048x4"  : ["1x64x8", "1x2048x4"],
+        "L2_1024x16_LRU"    : ["1x64x8", "LRU_1x1024x16"],
+        "L2_1024x16_RANDOM" : ["1x64x8", "RANDOM_1x1024x16"],
+        "L2_1024x16_RRIP"   : ["1x64x8", "RRIP_1x1024x16"]
+    },
+    "cache": {
+        "1x64x8": {
+            "number": 1,
+            "set"   : 64,
+            "way"   : 8,
+            "type"  : "norm",
+            "indexer"    : "norm",
+            "tagger"     : "norm",
+            "replacer"   : "lru",
+            "hasher"     : "norm",
+            "delay"      : 0
+        },
+        "1x32x8":      { "base": "1x64x8",    "set": 32  },
+        "1x64x4":      { "base": "1x64x8",    "way": 4   },
+        "2x64x8":      { "base": "1x64x8",    "number": 2},
+        "4x64x8":      { "base": "1x64x8",    "number": 4},
+        "8x64x8":      { "base": "1x64x8",    "number": 8},
+        "1x1024x16":   { "base": "1x64x8",    "set": 1024, "way": 16},
+        "2x1024x16":   { "base": "1x1024x16", "number": 2},
+        "1x512x16" :   { "base": "1x1024x16", "set": 512 },
+        "1x1024x8" :   { "base": "1x1024x16", "way": 8   },
+        "1x1024x12":   { "base": "1x1024x16", "way": 12  },
+        "1x1024x20":   { "base": "1x1024x16", "way": 20  },
+        "1x2048x4" :   { "base": "1x1024x16", "set": 2048, "way": 4},
+        "LRU_1x1024x16"    : { "base": "1x1024x16", "replacer" : "norm"   },
+        "RANDOM_1x1024x16" : { "base": "1x1024x16", "replacer" : "random" },
+        "RRIP_1x32x8"      : { "base": "1x32x8",    "replacer" : "rrip"   },
+        "RRIP_1x1024x16"   : { "base": "1x1024x16", "replacer" : "rrip"   }
+    },
+    "indexer": {
+        "norm": {
+            "type"  : "norm",
+            "delay" : 0
+        }
+    },
+    "tagger": {
+        "norm": {
+            "type"  : "norm",
+            "delay" : 0
+        }
+    },
+    "replacer": {
+        "lru": {
+            "type"  : "lru",
+            "delay" : 0
+        },
+        "norm": {
+            "type"  : "lru",
+            "delay" : 0
+        },
+        "random": {
+            "type"  : "random",
+            "delay" : 0
+        },
+        "fifo": {
+            "type"  : "fifo",
+            "delay" : 0
+        },
+        "rrip": {
+            "type"  : "rrip",
+            "width" : 2,
+            "delay" : 0
+        }
+    },
+    "hasher": {
+        "norm": {
+            "type"  : "norm",
+            "delay" : 0
+        },
+        "hash": {
+            "type"  : "hash",
+            "delay" : 0
+        }
+    }
+}

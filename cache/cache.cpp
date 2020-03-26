@@ -1,6 +1,9 @@
 #include "cache/cache.hpp"
 #include "util/query.hpp"
 #include "util/report.hpp"
+#include <boost/format.hpp>
+
+const uint32_t mem_delay = 200;  // currently this is a hack
 
 std::string CacheBase::cache_name() const {
   if(core_id < 0) {
@@ -20,12 +23,12 @@ std::string CacheBase::cache_name() const {
 }
 
 void CacheBase::query_block(uint32_t idx, uint32_t way, CBInfo *info) const {
-  *info = CBInfo(get_meta(idx, way));
+  *info = CBInfo(get_meta(NULL, idx, way));
 }
 
 void CacheBase::query_set(uint32_t idx, SetInfo *info) const {
   info->ways.resize(nway);
-  for(int i=0; i<nway; i++) info->ways[i] = CBInfo(get_meta(idx, i));
+  for(int i=0; i<nway; i++) info->ways[i] = CBInfo(get_meta(NULL, idx, i));
 }
 
 LocInfo CacheBase::query_loc(uint64_t addr) {
@@ -38,47 +41,82 @@ bool CacheBase::query_coloc(uint64_t addrA, uint64_t addrB) {
   return get_index(NULL, addrA) == get_index(NULL, addrB);
 }
 
-void L1CacheBase::read(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
+void CoherentCache::replace(uint64_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way) {
+  *idx = cache->get_index(latency, addr);
+  *way = cache->replace(latency, *idx);
+  evict(latency, *idx, *way);
+}
+
+void CoherentCache::flush(uint64_t *latency, uint64_t addr, int32_t levels, uint32_t inner_id) {
+  uint32_t idx, way;
+  cache->latency_acc(latency);
+  if(cache->hit(latency, addr, &idx, &way))
+    evict(latency, idx, way);
+}
+
+void CoherentCache::flush_cache(uint64_t *latency, int32_t levels, uint32_t inner_id) {
+  for(uint32_t idx=0; idx<cache->nset; idx++)
+    for(uint32_t way=0; way<cache->nway; way++)
+      evict(latency, idx, way);
+}
+
+void L1CacheBase::read(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   addr = CM::normalize(addr);
   uint32_t idx, way;
+  cache->latency_acc(latency);
   if(!cache->hit(latency, addr, &idx, &way)) {
     replace(latency, addr, &idx, &way);
     if(outer_caches) outer_read(latency, id, addr);
-    cache->set_meta(idx, way, CM::to_shared(addr));
+    cache->set_meta(latency, idx, way, CM::to_shared(addr));
   }
   cache->access(idx, way);
   reporter.cache_access(level, core_id, cache_id, addr, idx, way, 1);
 }
 
-void L1CacheBase::write(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
+void L1CacheBase::write(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   addr = CM::normalize(addr);
   uint32_t idx, way;
+  cache->latency_acc(latency);
   if(!cache->hit(latency, addr, &idx, &way)) {
     replace(latency, addr, &idx, &way);
     if(outer_caches) outer_write(latency, id, addr);
-    cache->set_meta(idx, way, CM::to_modified(addr));
-  } else if(!CM::is_modified(cache->get_meta(idx, way))) {
+    cache->set_meta(latency, idx, way, CM::to_modified(addr));
+  } else if(!CM::is_modified(cache->get_meta(NULL, idx, way))) {
     if(outer_caches) outer_write(latency, id, addr);
-    cache->set_meta(idx, way, CM::to_modified(addr));
+    cache->set_meta(latency, idx, way, CM::to_modified(addr));
   }
   cache->access(idx, way);
   reporter.cache_access(level, core_id, cache_id, addr, idx, way, 2);
 }
 
-void L1CacheBase::probe(uint32_t *latency, uint64_t addr, bool invalid) {
+void L1CacheBase::flush(uint64_t *latency, uint64_t addr, int32_t levels, uint32_t inner_id) {
+  addr = CM::normalize(addr);
+  CoherentCache::flush(latency, addr, levels, inner_id);
+  if(levels != 0)
+    if(outer_caches) outer_flush(latency, id, addr, levels-1);
+}
+
+void L1CacheBase::flush_cache(uint64_t *latency, int32_t levels, uint32_t inner_id) {
+  CoherentCache::flush_cache(latency, levels, inner_id);
+  if(levels != 0)
+    if(outer_caches) outer_flush_cache(latency, id, levels-1);
+}
+
+void L1CacheBase::probe(uint64_t *latency, uint64_t addr, bool invalid) {
   uint32_t idx, way;
+  cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) {
-    uint64_t meta = cache->get_meta(idx, way);
+    uint64_t meta = cache->get_meta(NULL, idx, way);
 
     if(CM::is_modified(meta))
       if(outer_caches) outer_release(latency, id, addr);
 
     if(invalid) {
-      cache->set_meta(idx, way, CM::to_invalid(meta));
+      cache->set_meta(latency, idx, way, CM::to_invalid(meta));
       cache->invalid(idx, way);
       reporter.cache_evict(level, core_id, cache_id, addr, idx, way);
     } else {
-      cache->set_meta(idx, way, CM::to_shared(meta));
+      cache->set_meta(latency, idx, way, CM::to_shared(meta));
       cache->access(idx, way);
       reporter.cache_access(level, core_id, cache_id, addr, idx, way, 1);
     }
@@ -90,58 +128,61 @@ void L1CacheBase::query_loc(uint64_t addr, std::list<LocInfo> *locs) {
   locs->push_front(cache->query_loc(addr));
 }
 
-void L1CacheBase::replace(uint32_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way) {
-  *idx = cache->get_index(latency, addr);
-  *way = cache->replace(*idx);
-  uint64_t meta = cache->get_meta(*idx, *way);
-  uint64_t rep_addr = CM::normalize(meta);   // we know meta has the full address except for the lowest 6 bits
-
+void L1CacheBase::evict(uint64_t *latency, uint32_t idx, uint32_t way) {
+  uint64_t meta = cache->get_meta(NULL, idx, way);
+  uint64_t addr = CM::normalize(meta);   // we know meta has the full address except for the lowest 6 bits
   if(CM::is_modified(meta))
-    if(outer_caches) outer_release(latency, id, rep_addr);
+    if(outer_caches) outer_release(latency, id, addr);
 
   if(!CM::is_invalid(meta)) {
-    cache->invalid(*idx, *way);
-    reporter.cache_evict(level, core_id, cache_id, rep_addr, *idx, *way);
+    cache->set_meta(latency, idx, way, CM::to_invalid(meta));
+    cache->invalid(idx, way);
+    reporter.cache_evict(level, core_id, cache_id, addr, idx, way);
   }
 }
 
-void LLCCacheBase::read(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
+void LLCCacheBase::read(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   uint32_t idx, way;
+  cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) { // hit
-    if(CM::is_modified(cache->get_meta(idx, way))) {
+    if(CM::is_modified(cache->get_meta(NULL, idx, way))) {
       inner_probe(latency, id, addr, inner_id, false, false);
-      cache->set_meta(idx, way, CM::to_shared(cache->get_meta(idx, way)));
+      cache->set_meta(latency, idx, way, CM::to_shared(cache->get_meta(NULL, idx, way)));
     }
   } else {  //miss
     replace(latency, addr, &idx, &way);
-    cache->set_meta(idx, way, CM::to_shared(addr));
+    if(latency) *latency += mem_delay;
+    cache->set_meta(latency, idx, way, CM::to_shared(addr));
   }
   cache->access(idx, way);
   reporter.cache_access(level, core_id, cache_id, addr, idx, way, 1);
 }
 
-void LLCCacheBase::write(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
+void LLCCacheBase::write(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   uint32_t idx, way;
+  cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) { // hit
-    if(CM::is_shared(cache->get_meta(idx, way))) {
+    if(CM::is_shared(cache->get_meta(NULL, idx, way))) {
       inner_probe(latency, id, addr, inner_id, true, false);
-      cache->set_meta(idx, way, CM::to_modified(cache->get_meta(idx, way)));
+      cache->set_meta(latency, idx, way, CM::to_modified(cache->get_meta(NULL, idx, way)));
     }
   } else {  //miss
     replace(latency, addr, &idx, &way);
-    cache->set_meta(idx, way, CM::to_modified(addr));
+    if(latency) *latency += mem_delay;
+    cache->set_meta(latency, idx, way, CM::to_modified(addr));
   }
   cache->access(idx, way);
   reporter.cache_access(level, core_id, cache_id, addr, idx, way, 2);
 }
 
-void LLCCacheBase::release(uint32_t *latency, uint64_t addr, uint32_t inner_id) {
+void LLCCacheBase::release(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   uint32_t idx, way;
+  cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) { // hit
-    uint64_t meta = cache->get_meta(idx, way);
+    uint64_t meta = cache->get_meta(NULL, idx, way);
     meta = CM::to_shared(meta);
     meta = CM::to_dirty(meta);
-    cache->set_meta(idx, way, meta);
+    cache->set_meta(latency, idx, way, meta);
   } else { // miss
     // should never went here
     throw(addr);
@@ -154,15 +195,16 @@ void LLCCacheBase::query_loc(uint64_t addr, std::list<LocInfo> *locs) {
   locs->push_front(cache->query_loc(addr));
 }
 
-void LLCCacheBase::replace(uint32_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way) {
-  *idx = cache->get_index(latency, addr);
-  *way = cache->replace(*idx);
-  uint64_t meta = cache->get_meta(*idx, *way);
-  uint64_t rep_addr = CM::normalize(meta); // we know meta has the full address except for the lowest 6 bits
+void LLCCacheBase::evict(uint64_t *latency, uint32_t idx, uint32_t way) {
+  uint64_t meta = cache->get_meta(NULL, idx, way);
+  uint64_t addr = CM::normalize(meta);   // we know meta has the full address except for the lowest 6 bits
   if(!CM::is_invalid(meta)) {
-    inner_probe(latency, id, rep_addr, -1, true, true);
-    cache->invalid(*idx, *way);
-    reporter.cache_evict(level, core_id, cache_id, rep_addr, *idx, *way);
+    inner_probe(latency, id, addr, -1, true, true);
+    meta = cache->get_meta(NULL, idx, way); // always get a new meta after probes
+    if(CM::is_modified(meta) && latency) *latency += mem_delay;
+    cache->set_meta(latency, idx, way, CM::to_invalid(meta));
+    cache->invalid(idx, way);
+    reporter.cache_evict(level, core_id, cache_id, addr, idx, way);
   }
 }
 
