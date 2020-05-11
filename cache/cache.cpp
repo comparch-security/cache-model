@@ -146,7 +146,7 @@ void LLCCacheBase::read(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) { // hit
     if(CM::is_modified(cache->get_meta(NULL, idx, way))) {
-      inner_probe(latency, id, addr, inner_id, false, false);
+      inner_probe(latency, inner_id, addr, id, false, false);
       cache->set_meta(latency, idx, way, CM::to_shared(cache->get_meta(NULL, idx, way)));
     }
   } else {  //miss
@@ -163,7 +163,7 @@ void LLCCacheBase::write(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) { // hit
     if(CM::is_shared(cache->get_meta(NULL, idx, way))) {
-      inner_probe(latency, id, addr, inner_id, true, false);
+      inner_probe(latency, inner_id, addr, id, true, false);
       cache->set_meta(latency, idx, way, CM::to_modified(cache->get_meta(NULL, idx, way)));
     }
   } else {  //miss
@@ -199,7 +199,7 @@ void LLCCacheBase::evict(uint64_t *latency, uint32_t idx, uint32_t way) {
   uint64_t meta = cache->get_meta(NULL, idx, way);
   uint64_t addr = CM::normalize(meta);   // we know meta has the full address except for the lowest 6 bits
   if(!CM::is_invalid(meta)) {
-    inner_probe(latency, id, addr, -1, true, true);
+    inner_probe(latency, -1, addr, id, true, true);
     meta = cache->get_meta(NULL, idx, way); // always get a new meta after probes
     if(CM::is_modified(meta) && latency) *latency += mem_delay;
     cache->set_meta(latency, idx, way, CM::to_invalid(meta));
