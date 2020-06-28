@@ -44,6 +44,7 @@ public:
   int32_t core_id;
   uint32_t cache_id;
   CacheBase *cache;
+  CoherentCache *wrapper;
   std::unordered_map<uint32_t, LocRange> locs;
 
   LocInfo(uint32_t level, int32_t core_id, uint32_t cache_id, CacheBase *cache)

@@ -2,8 +2,11 @@
 #include <cstddef>
 #include <unordered_map>
 #include <unordered_set>
+#include <list>
+#include <vector>
 #include <boost/format.hpp>
 #include <iostream>
+#include <fstream>
 
 template<typename RD>
 class CacheDB {
@@ -14,6 +17,8 @@ public:
   RD *get(uint64_t id) { return &(db[id]); }
   const RD *get(uint64_t id) const { return &(db.at(id)); }
   void set(uint64_t id, const RD& r) { db[id] = r; }
+  typename std::unordered_map<uint64_t, RD>::const_iterator db_begin() const { return db.begin(); }
+  typename std::unordered_map<uint64_t, RD>::const_iterator db_end() const { return db.end(); }
   std::string to_string() const {
     std::string rv;
     for(auto it=db.begin(); it!=db.end(); it++) {
@@ -30,12 +35,14 @@ public:
 
 class AccRecord {
 public:
-  uint32_t n_access;
-  uint32_t n_evict;
+  uint64_t n_access;
+  uint64_t n_hit;
+  uint64_t n_evict;
+  uint64_t n_writeback;
 
-  AccRecord() : n_access(0), n_evict(0) {}
+  AccRecord() : n_access(0), n_hit(0), n_evict(0), n_writeback(0) {}
   virtual std::string to_string() const {
-    auto fmt = boost::format("evict %2% in %1% accesses") % n_access % n_evict;
+    auto fmt = boost::format("hit %1%, evict %2% and writeback %3% in %4% accesses") % n_hit % n_evict % n_writeback % n_access;
     return fmt.str();
   }
   virtual ~AccRecord() {}
@@ -43,24 +50,46 @@ public:
 
 class DBAccType : public CacheDB<AccRecord> {
   uint64_t m_access;
+  uint64_t m_hit;
   uint64_t m_evict;
+  uint64_t m_writeback;
 public:
-  DBAccType() : m_access(0), m_evict(0) {}
-  virtual void access(uint64_t id)           { get(id)->n_access++; m_access++; }
-  virtual uint32_t get_access(uint64_t id) const { return hit(id) ? get(id)->n_access : 0; }
-  virtual uint32_t get_access() const            { return m_access; }
-  virtual void evict(uint64_t id)            { get(id)->n_evict++; m_evict++; }
-  virtual uint32_t get_evict(uint64_t id) const  { return hit(id) ? get(id)->n_evict : 0; }
-  virtual uint32_t get_evict() const             { return m_evict; }
-  virtual ~DBAccType() {}
-
-  virtual void replace(uint64_t id) {
-    auto r = get(id);
-    r->n_access++;
-    r->n_evict++;
+  bool detailed_to_addr;
+  DBAccType() : m_access(0), m_hit(0), m_evict(0), m_writeback(0), detailed_to_addr(false) {}
+  virtual void access(uint64_t id, bool bhit, uint64_t *wt) {
+    if(detailed_to_addr) get(id)->n_access++;
     m_access++;
+    if(bhit && detailed_to_addr) get(id)->n_hit++;
+    if(bhit) m_hit++;
+
+  }
+  virtual void evict(uint64_t id) {
+    if(detailed_to_addr) get(id)->n_evict++;
     m_evict++;
   }
+  virtual void writeback(uint64_t id) {
+    if(detailed_to_addr) get(id)->n_writeback++;
+    m_writeback++;
+  }
+  virtual uint64_t get_access(uint64_t id) const { return hit(id) ? get(id)->n_access : 0; }
+  virtual uint64_t get_access() const            { return m_access; }
+  virtual uint64_t get_hit(uint64_t id) const    { return hit(id) ? get(id)->n_hit : 0; }
+  virtual uint64_t get_hit() const               { return m_hit; }
+  virtual uint64_t get_miss(uint64_t id) const   { return hit(id) ? get(id)->n_access - get(id)->n_hit : 0; }
+  virtual uint64_t get_miss() const              { return m_access - m_hit; }
+  virtual uint64_t get_evict(uint64_t id) const  { return hit(id) ? get(id)->n_evict : 0; }
+  virtual uint64_t get_evict() const             { return m_evict; }
+  virtual uint64_t get_writeback(uint64_t id) const  { return hit(id) ? get(id)->n_writeback : 0; }
+  virtual uint64_t get_writeback() const             { return m_writeback; }
+  virtual void clear() {
+    CacheDB<AccRecord>::clear();
+    m_access = 0;
+    m_hit = 0;
+    m_evict = 0;
+    m_writeback = 0;
+  }
+
+  virtual ~DBAccType() {}
 
   virtual std::string to_string(uint64_t id) const {
     return hit(id) ? get(id)->to_string() : std::string();
@@ -216,96 +245,109 @@ Reporter_t::~Reporter_t() { delete dbs; }
 
 
 // register recorders
-void Reporter_t::register_cache_access_tracer(uint32_t level) {
-  uint64_t id = hash(level);
-  assert(!dbs->acc_dbs.count(id));
-  dbs->acc_dbs[id];
-  db_depth[0] = true;
-  db_type[0] = true;
+void Reporter_t::register_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr, bool extra) {
+  uint64_t id;
+  switch(tracer_depth) {
+  case 0: id = hash(level); break;
+  case 1: id = hash(level, core_id); break;
+  case 2: id = hash(level, core_id, cache_id); break;
+  case 3: id = hash(level, core_id, cache_id, idx); break;
+  default: id = 0; // should not run here
 }
-
-void Reporter_t::register_cache_access_tracer(uint32_t level, int32_t core_id) {
-  uint64_t id = hash(level, core_id);
+  switch(tracer_type) {
+  case 0: // access trace
   assert(!dbs->acc_dbs.count(id));
-  dbs->acc_dbs[id];
-  db_depth[1] = true;
+    dbs->acc_dbs[id].detailed_to_addr = extra;
+    db_depth[tracer_depth] = true;
   db_type[0] = true;
-}
-
-void Reporter_t::register_cache_access_tracer(uint32_t level, int32_t core_id, int32_t cache_id) {
-  uint64_t id = hash(level, core_id, cache_id);
-  assert(!dbs->acc_dbs.count(id));
-  dbs->acc_dbs[id];
-  db_depth[2] = true;
-  db_type[0] = true;
-}
-
-void Reporter_t::register_set_access_tracer(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx) {
-  uint64_t id = hash(level, core_id, cache_id, idx);
-  assert(!dbs->acc_dbs.count(id));
-  dbs->acc_dbs[id];
-  db_depth[3] = true;
-  db_type[0] = true;
-}
-
-void Reporter_t::register_cache_addr_tracer(uint32_t level) {
-  uint64_t id = hash(level);
+    break;
+  case 1: // address trace
   assert(!dbs->addr_dbs.count(id));
   dbs->addr_dbs[id];
-  db_depth[0] = true;
+    db_depth[tracer_depth] = true;
   db_type[1] = true;
-}
-
-void Reporter_t::register_cache_addr_tracer(uint32_t level, int32_t core_id) {
-  uint64_t id = hash(level, core_id);
-  assert(!dbs->addr_dbs.count(id));
-  dbs->addr_dbs[id];
-  db_depth[1] = true;
-  db_type[1] = true;
-}
-
-void Reporter_t::register_cache_addr_tracer(uint32_t level, int32_t core_id, int32_t cache_id) {
-  uint64_t id = hash(level, core_id, cache_id);
-  assert(!dbs->addr_dbs.count(id));
-  dbs->addr_dbs[id];
-  db_depth[2] = true;
-  db_type[1] = true;
-}
-
-void Reporter_t::register_cache_state_tracer(uint32_t level) {
-  uint64_t id = hash(level);
+    break;
+  case 2: // state trace
   assert(!dbs->state_dbs.count(id));
   dbs->state_dbs[id];
-  db_depth[0] = true;
+    db_depth[tracer_depth] = true;
   db_type[2] = true;
+    break;
+  case 3: // address/set monitor
+    if(tracer_depth == 3) {
+      dbs->set_traces.set(id, std::unordered_set<uint64_t>());
+      db_depth[tracer_depth] = true;
+    } else {
+      dbs->addr_traces.set(addr, true);
+    }
+    db_type[3] = true;
+    break;
+  default:
+    return; // should not run to here
+  }
 }
 
-void Reporter_t::register_cache_state_tracer(uint32_t level, int32_t core_id) {
-  uint64_t id = hash(level, core_id);
-  assert(!dbs->state_dbs.count(id));
-  dbs->state_dbs[id];
-  db_depth[1] = true;
-  db_type[2] = true;
+// remove a certain recorder
+void Reporter_t::remove_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) {
+  uint64_t id;
+  switch(tracer_depth) {
+  case 0: id = hash(level); break;
+  case 1: id = hash(level, core_id); break;
+  case 2: id = hash(level, core_id, cache_id); break;
+  case 3: id = hash(level, core_id, cache_id, idx); break;
+  default: id = 0; // should not run here
+  }
+  switch(tracer_type) {
+  case 0: // access trace
+    assert(dbs->acc_dbs.count(id));
+    dbs->acc_dbs.erase(id);
+    break;
+  case 1: // address trace
+    assert(dbs->addr_dbs.count(id));
+    dbs->addr_dbs.erase(id);
+    break;
+  case 2: // state trace
+    assert(dbs->state_dbs.count(id));
+    dbs->state_dbs.erase(id);
+    break;
+  case 3: // address/set monitor
+    if(tracer_depth == 3) {
+      dbs->set_traces.clear(id);
+    } else {
+      dbs->addr_traces.clear(addr);
+    }
+    break;
+  default:
+    return; // should not run to here
+  }
 }
 
-void Reporter_t::register_cache_state_tracer(uint32_t level, int32_t core_id, int32_t cache_id) {
-  uint64_t id = hash(level, core_id, cache_id);
-  assert(!dbs->state_dbs.count(id));
-  dbs->state_dbs[id];
-  db_depth[2] = true;
-  db_type[2] = true;
-}
-
-void Reporter_t::register_address_tracer(uint64_t addr) {
-  dbs->addr_traces.set(addr, true);
-  db_type[3] = true;
-}
-
-void Reporter_t::register_set_tracer(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx) {
-  uint64_t id = hash(level, core_id, cache_id, idx);
-  dbs->set_traces.set(id, std::unordered_set<uint64_t>());
-  db_depth[3] = true;
-  db_type[3] = true;
+// reset a certain recorder
+void Reporter_t::reset_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) {
+  uint64_t id;
+  switch(tracer_depth) {
+  case 0: id = hash(level); break;
+  case 1: id = hash(level, core_id); break;
+  case 2: id = hash(level, core_id, cache_id); break;
+  case 3: id = hash(level, core_id, cache_id, idx); break;
+  default: id = 0; // should not run here
+  }
+  switch(tracer_type) {
+  case 0: // access trace
+    assert(dbs->acc_dbs.count(id));
+    dbs->acc_dbs[id].clear();
+    break;
+  case 1: // address trace
+    assert(dbs->addr_dbs.count(id));
+    dbs->addr_dbs[id].clear();
+    break;
+  case 2: // state trace
+    assert(dbs->state_dbs.count(id));
+    dbs->state_dbs[id].clear();
+    break;
+  default:
+    return; // should not run to here
+  }
 }
 
 // clear recorders
@@ -325,29 +367,29 @@ void Reporter_t::clear() {
 }
 
   // event recorders
-void Reporter_t::cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way, uint32_t state) {
+void Reporter_t::cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way, uint32_t state, bool hit) {
   uint64_t record = addr_hash(addr);
   if(db_depth[0]) {
     uint64_t id = hash(level);
-    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, wall_time);
     if(db_type[1] && dbs->addr_dbs.count(id))  dbs->addr_dbs[id].access(record, idx, way);
     if(db_type[2] && dbs->state_dbs.count(id)) dbs->state_dbs[id].set_state(record, state);
   }
   if(db_depth[1]) {
     uint64_t id = hash(level, core_id);
-    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, wall_time);
     if(db_type[1] && dbs->addr_dbs.count(id))  dbs->addr_dbs[id].access(record, idx, way);
     if(db_type[2] && dbs->state_dbs.count(id)) dbs->state_dbs[id].set_state(record, state);
   }
   if(db_depth[2]) {
     uint64_t id = hash(level, core_id, cache_id);
-    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, wall_time);
     if(db_type[1] && dbs->addr_dbs.count(id))  dbs->addr_dbs[id].access(record, idx, way);
     if(db_type[2] && dbs->state_dbs.count(id)) dbs->state_dbs[id].set_state(record, state);
   }
   if(db_depth[3]) {
     uint64_t id = hash(level, core_id, cache_id, idx);
-    if(db_type[0] && dbs->acc_dbs.count(id)) dbs->acc_dbs[id].access(record);
+    if(db_type[0] && dbs->acc_dbs.count(id))  dbs->acc_dbs[id].access(record, hit, wall_time);
     if(db_type[3] && dbs->set_traces.hit(id)) dbs->set_traces.access(id, addr);
   }
   if(db_type[3] && dbs->addr_traces.hit(addr)) {
@@ -379,6 +421,26 @@ void Reporter_t::cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, 
   }
   if(db_type[3] && dbs->addr_traces.hit(addr)) {
     dbs->addr_traces.report("is evicted", level, core_id, cache_id, addr, idx, way, 0);
+  }
+}
+
+void Reporter_t::cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way) {
+  uint64_t record = addr_hash(addr);
+  if(db_depth[0]) {
+    uint64_t id = hash(level);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].writeback(record);
+  }
+  if(db_depth[1]) {
+    uint64_t id = hash(level, core_id);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].writeback(record);
+  }
+  if(db_depth[2]) {
+    uint64_t id = hash(level, core_id, cache_id);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].writeback(record);
+  }
+  if(db_depth[3]) {
+    uint64_t id = hash(level, core_id, cache_id, idx);
+    if(db_type[0] && dbs->acc_dbs.count(id)) dbs->acc_dbs[id].writeback(record);
   }
 }
 
@@ -422,18 +484,42 @@ bool Reporter_t::check_hit(uint64_t addr) const {
   return false;
 }
 
-uint32_t Reporter_t::check_cache_access_generic(uint64_t id) const {
+uint64_t Reporter_t::check_cache_access_generic(uint64_t id) const {
   return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_access() : 0;
 }
 
-uint32_t Reporter_t::check_addr_access_generic(uint64_t id, uint64_t addr) const {
+uint64_t Reporter_t::check_addr_access_generic(uint64_t id, uint64_t addr) const {
   return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_access(addr_hash(addr)) : 0;
 }
 
-uint32_t Reporter_t::check_cache_evict_generic(uint64_t id) const {
+uint64_t Reporter_t::check_cache_hit_generic(uint64_t id) const {
+  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_hit() : 0;
+}
+
+uint64_t Reporter_t::check_addr_hit_generic(uint64_t id, uint64_t addr) const {
+  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_hit(addr_hash(addr)) : 0;
+}
+
+uint64_t Reporter_t::check_cache_miss_generic(uint64_t id) const {
+  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_miss() : 0;
+}
+
+uint64_t Reporter_t::check_addr_miss_generic(uint64_t id, uint64_t addr) const {
+  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_miss(addr_hash(addr)) : 0;
+}
+
+uint64_t Reporter_t::check_cache_evict_generic(uint64_t id) const {
   return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_evict() : 0;
 }
 
-uint32_t Reporter_t::check_addr_evict_generic(uint64_t id, uint64_t addr) const {
+uint64_t Reporter_t::check_addr_evict_generic(uint64_t id, uint64_t addr) const {
   return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_evict(addr_hash(addr)) : 0;
+}
+
+uint64_t Reporter_t::check_cache_writeback_generic(uint64_t id) const {
+  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_writeback() : 0;
+}
+
+uint64_t Reporter_t::check_addr_writeback_generic(uint64_t id, uint64_t addr) const {
+  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_writeback(addr_hash(addr)) : 0;
 }

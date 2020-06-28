@@ -33,12 +33,11 @@ void cache_init() {
   if(ccfg.enable[1]) l2_caches.resize(ccfg.number[1]);
 
   for(int i=0; i<ccfg.number[0]; i++)
-    l1_caches[i] = new L1CacheBase(i, i, 0, ccfg.cache_gen[0], ccfg.enable[1] ? &l2_caches : NULL,
-                                   ccfg.hash_gen[0], ccfg.number[1]);
+    l1_caches[i] = new L1CacheBase(i, i, 0, ccfg.cache_gen[0], ccfg.enable[1] ? &l2_caches : NULL, ccfg.hash_gen[0]);
 
   if(ccfg.enable[1]) {
     for(int i=0; i<ccfg.number[1]; i++)
-      l2_caches[i] = new LLCCacheBase(i, ccfg.cache_gen[1], &l1_caches);
+      l2_caches[i] = new LLCCacheBase(i, 2, ccfg.cache_gen[1], &l1_caches);
   }
 
   random_seed_gen64();
@@ -49,12 +48,17 @@ void cache_release() {
   if(ccfg.enable[1]) for(int i=0; i<ccfg.number[1]; i++) delete l2_caches[i];
 }
 
-void set_hit_check_func(uint64_t addr, L1CacheBase *cache, uint32_t level, traverse_func_t traverse_func) {
+LocInfo get_target_cache(uint64_t addr, L1CacheBase *cache, uint32_t level, bool print = false) {
   std::list<LocInfo> locs;
   cache->query_loc(addr, &locs);
+  if(print) print_locs(locs, 2);
   auto it = locs.begin();
   for(int i=1; i<level; i++) it++;
-  CacheBase *c = it->cache;
+  return *it;
+}
+
+void set_hit_check_func(uint64_t addr, L1CacheBase *cache, uint32_t level, traverse_func_t traverse_func) {
+  CacheBase *c = get_target_cache(addr, cache, level).cache;
   hit = std::bind(query_hit, std::placeholders::_1, c);
   check = std::bind(query_check, addr, c, std::placeholders::_1);
   traverse = traverse_test(traverse_func, hit, tcfg.ntests, tcfg.ntraverse, tcfg.threshold);

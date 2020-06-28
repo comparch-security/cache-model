@@ -42,6 +42,7 @@ struct CM
   static uint64_t to_shared(uint64_t m)    { return (m >> 2 << 2) | 1; }
   static uint64_t to_modified(uint64_t m)  { return (m >> 2 << 2) | 2; }
   static uint64_t to_dirty(uint64_t m)     { return m | 0x4; }
+  static uint64_t to_clean(uint64_t m)     { return m & ~(uint64_t)(0x4); }
 };
 
 // query

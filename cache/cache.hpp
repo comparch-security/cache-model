@@ -21,11 +21,12 @@ protected:
   TagFuncBase     *tagger;      // generic tag function
   ReplaceFuncBase *replacer;    // generic replace function
   uint64_t *meta;      // metadata array
+  friend CoherentCache;
+
+public:
   uint32_t level;      // cache level (L1, L2, L3)
   int32_t core_id;     // when private, record the core id, -1 means unified (LLC)
   uint32_t cache_id;   // record the cache id in a core or just cache id when unified (LLC)
-
-public:
   uint32_t nset, nway; // number of sets and ways
 
   CacheBase(uint32_t nset, uint32_t nway,
@@ -36,7 +37,8 @@ public:
             uint32_t delay)
     : DelaySim(delay),
       indexer(ic(nset)), tagger(tc(nset)), replacer(rc(nset, nway)),
-      nset(nset), nway(nway), level(level), core_id(core_id), cache_id(cache_id)
+      level(level), core_id(core_id), cache_id(cache_id),
+      nset(nset), nway(nway)
   {
     size_t s = sizeof(uint64_t)*nset*nway;
     meta = (uint64_t *)malloc(s); memset(meta, 0, s);
@@ -119,59 +121,51 @@ class CoherentCache
 protected:
   uint32_t id;
   CacheBase *cache;
-  uint32_t level;      // cache level (L1, L2, L3)
-  int32_t core_id;     // when private, record the core id, -1 means unified (LLC)
-  uint32_t cache_id;   // record the cache id in a core or just cache id when unified (LLC)
-
+  std::vector<CoherentCache *> *inner_caches;
+  std::vector<CoherentCache *> *outer_caches;
+  LLCHashBase *hasher;
 public:
   CoherentCache(uint32_t id,
                 uint32_t level,
                 int32_t core_id,
                 uint32_t cache_id,
-                cache_creator_t cc)
-    : id(id), level(level), core_id(core_id), cache_id(cache_id)
-  {
-    cache = cc(level, core_id, cache_id);
-  }
+                cache_creator_t cc,
+                std::vector<CoherentCache *> *ic = NULL,
+                std::vector<CoherentCache *> *oc = NULL,
+                llc_hash_creator_t hc = LLCHashNorm::gen()
+                )
+    : id(id), cache(cc(level, core_id, cache_id)),
+      inner_caches(ic), outer_caches(oc), hasher(hc(oc == NULL ? 0 : oc->size()))
+  {}
 
   virtual ~CoherentCache() {
     delete cache;
+    delete hasher;
   }
 
+  std::string cache_name() const { return cache->cache_name(); }
   bool hit(uint64_t addr) { return cache->hit(addr); }
   uint32_t get_index(uint64_t addr) { return cache->get_index(NULL, addr); }
 
-  virtual void read(uint64_t *latency, uint64_t addr, uint32_t inner_id) = 0;
-  virtual void write(uint64_t *latency, uint64_t addr, uint32_t inner_id) = 0;
-  virtual void release(uint64_t *latency, uint64_t addr, uint32_t inner_id) = 0;
+  virtual void read(uint64_t *latency, uint64_t addr, uint32_t inner_id);
+  virtual void write(uint64_t *latency, uint64_t addr, uint32_t inner_id, bool to_dirty = false);
+  virtual void release(uint64_t *latency, uint64_t addr, uint32_t inner_id);
   virtual void flush(uint64_t *latency, uint64_t addr, int32_t levels, uint32_t inner_id);
   virtual void flush_cache(uint64_t *latency, int32_t levels, uint32_t inner_id);
-  virtual void probe(uint64_t *latency, uint64_t addr, bool invalid) = 0;
+  virtual void probe(uint64_t *latency, uint64_t addr, bool invalid);
   virtual void query_block(uint32_t idx, uint32_t way, CBInfo *info) const {
     cache->query_block(idx, way, info);
   }
   virtual void query_set(uint32_t idx, SetInfo *info) const {
     cache->query_set(idx, info);
   }
-  virtual bool query_hit(uint64_t addr) { return cache->hit(addr); }
-  virtual void query_loc(uint64_t addr, std::list<LocInfo>* locs) = 0;
+  virtual bool query_hit(uint64_t addr) { return cache->hit(CM::normalize(addr)); }
+  virtual void query_loc(uint64_t addr, std::list<LocInfo>* locs);
 
-protected:
-  virtual void replace(uint64_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way);
-  virtual void evict(uint64_t *latency, uint32_t idx, uint32_t way) = 0;
-};
-
-class InnerCoherentCache;       // coherent cache on the processor side
-class OuterCoherentCache;       // coherent cache on the memory side
-
-class InnerCoherentCache
-{
-protected:
-  std::vector<CoherentCache *> *outer_caches;
-  LLCHashBase *hasher;
-public:
-  InnerCoherentCache(std::vector<CoherentCache *> *oc, llc_hash_creator_t hc, uint32_t noc)
-    : outer_caches(oc), hasher(hc(noc)) {}
+  virtual void inner_probe(uint64_t *latency, uint32_t inner_id, uint64_t addr, uint32_t outer_id, bool invalidate, bool all) {
+    for (uint32_t i=0; i<inner_caches->size(); i++)
+      if(inner_id != i || all) (*inner_caches)[i]->probe(latency, addr, invalidate);
+  }
 
   virtual void outer_read(uint64_t *latency, uint32_t id, uint64_t addr) {
     (*outer_caches)[hasher->hash(addr)]->read(latency, addr, id);
@@ -190,96 +184,63 @@ public:
       oc->flush_cache(latency, id, levels);
   }
 
-  uint32_t oc_hash(uint32_t addr) { return hasher->hash(addr); }
-
   virtual void outer_query_loc(uint64_t addr, std::list<LocInfo> *locs) {
     (*outer_caches)[hasher->hash(addr)]->query_loc(addr, locs);
   }
 
-  virtual ~InnerCoherentCache() { delete hasher; }
-};
-
-class OuterCoherentCache
-{
 protected:
-  std::vector<CoherentCache *> *inner_caches;
-public:
-  OuterCoherentCache(std::vector<CoherentCache *> *ic)
-    : inner_caches(ic) {}
-
-  virtual void inner_probe(uint64_t *latency, uint32_t inner_id, uint64_t addr, uint32_t outer_id, bool invalidate, bool all) {
-    for (uint32_t i=0; i<inner_caches->size(); i++)
-      if(inner_id != i || all) (*inner_caches)[i]->probe(latency, addr, invalidate);
-  }
-
-  virtual ~OuterCoherentCache() {}
+  virtual void replace(uint64_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way);
+  virtual void evict(uint64_t *latency, uint32_t idx, uint32_t way);
 };
 
 /////////////////////////////////
 // Coherent L1 caches
 
-class L1CacheBase : public CoherentCache, public InnerCoherentCache
+class L1CacheBase : public CoherentCache
 {
 public:
   L1CacheBase(uint32_t id,
               int32_t core_id,
               uint32_t cache_id,
               cache_creator_t cc,
-              std::vector<CoherentCache *> *ocs,
-              llc_hash_creator_t hc,
-              uint32_t noc)
-    : CoherentCache(id, 1, core_id, cache_id, cc),
-      InnerCoherentCache(ocs, hc, noc) {}
+              std::vector<CoherentCache *> *oc = NULL,
+              llc_hash_creator_t hc = LLCHashNorm::gen()
+              )
+    : CoherentCache(id, 1, core_id, cache_id, cc, NULL, oc, hc)
+  {}
 
   virtual ~L1CacheBase() { }
 
-  virtual void read(uint64_t *latency, uint64_t addr, uint32_t inner_id);
-  virtual void write(uint64_t *latency, uint64_t addr, uint32_t inner_id);
-  // L1 cache do not support release()
-  virtual void release(uint64_t *latency, uint64_t addr, uint32_t inner_id) {}
-  virtual void flush(uint64_t *latency, uint64_t addr, int32_t levels, uint32_t inner_id);
-  virtual void flush_cache(uint64_t *latency, int32_t levels, uint32_t inner_id);
-  virtual void probe(uint64_t *latency, uint64_t addr, bool invalid);
+  // otherwise the virtual methods got hidden
+  using CoherentCache::read;
+  using CoherentCache::write;
+  using CoherentCache::flush;
+  using CoherentCache::flush_cache;
 
   void read(uint64_t addr)  { read(NULL, addr, 0);  }
-  void write(uint64_t addr) { write(NULL, addr, 0); }
+  void write(uint64_t addr) { write(NULL, addr, 0, true); }
   void flush(uint64_t addr) { flush(NULL, addr, -1, 0); }
   void flush_cache()        { flush_cache(NULL, 0, 0); } // flush L1 by default
   void read(uint64_t *latency, uint64_t addr)  { read(latency, addr, 0);  }
-  void write(uint64_t *latency, uint64_t addr) { write(latency, addr, 0); }
+  void write(uint64_t *latency, uint64_t addr) { write(latency, addr, 0, true); }
   void flush(uint64_t *latency, uint64_t addr) { flush(latency, addr, -1, 0); }
   void flush_cache(uint64_t *latency)          { flush_cache(latency, 0, 0); } // flush L1 by default
-
-  virtual void query_loc(uint64_t addr, std::list<LocInfo> *locs);
-
-protected:
-  virtual void evict(uint64_t *latency, uint32_t idx, uint32_t way);
 };
 
 /////////////////////////////////
-// Coherent LLC(L2) caches
+// Coherent LLC caches
 
-class LLCCacheBase : public CoherentCache, public OuterCoherentCache
+class LLCCacheBase : public CoherentCache
 {
 public:
   LLCCacheBase(uint32_t id,
+               uint32_t level,
                cache_creator_t cc,
-               std::vector<CoherentCache *> *ics)
-    : CoherentCache(id, 2, -1, id, cc),
-      OuterCoherentCache(ics) {}
+               std::vector<CoherentCache *> *ic)
+    : CoherentCache(id, level, -1, id, cc, ic)
+  {}
 
   virtual ~LLCCacheBase() { }
-
-  virtual void read(uint64_t *latency, uint64_t addr, uint32_t inner_id);
-  virtual void write(uint64_t *latency, uint64_t addr, uint32_t inner_id);
-  virtual void release(uint64_t *latency, uint64_t addr, uint32_t inner_id);
-  // LLC does not support probe
-  virtual void probe(uint64_t *latency, uint64_t addr, bool invalid) { }
-
-  virtual void query_loc(uint64_t addr, std::list<LocInfo> *locs);
-
-protected:
-  virtual void evict(uint64_t *latency, uint32_t idx, uint32_t way);
 };
 
 #endif
