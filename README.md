@@ -22,6 +22,7 @@ An Ideal Cache Model Implemented in C++
 
 ## References
 
+* Wei Song. 支持一致性缓存的Spike仿真器. CRVA联盟技术研讨会, 中国北京, 2020年7月18日. [[PDF](http://wsong83.github.io/presentation/crvs20200718.pdf), [Video](https://www.bilibili.com/video/BV1d5411h79R)]
 * Wei Song and Peng Liu. Dynamically finding minimal eviction sets can be quicker than you think for side-channel attacks against the LLC. In Proc. of the International Symposium on Research in Attacks, Intrusions and Defenses (RAID), Beijing, China, pp. 427–442, September 2019. [[Web](https://www.usenix.org/conference/raid2019/presentation/song)]
 * Zhenzhen Li and Wei Song. 升级RISC-V的指令级仿真器Spike的缓存模型. In 中国RISC-V论坛, 中国深圳, 2019年11月13日. [[PDF](http://wsong83.github.io/publication/comparch/crvf2019.pdf)]
 
