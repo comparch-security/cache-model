@@ -1,11 +1,12 @@
-An Ideal C++ Cache Model
+An Ideal Cache Model Implemented in C++
 -------------------------------
 
 #### Authors:
-* [Wei Song](mailto:wsong83@gmail.com) (Institute of Information Engineering, Chinese Academy of Sciences)
+* [Wei Song](mailto:wsong83@gmail.com) (SKLOIS, Institute of Information Engineering, Chinese Academy of Sciences)
 
 #### Cotributors:
-* [Zhenzhen Li](mailto:lizhenzhen1@iie.ac.cn) (Institute of Information Engineering, Chinese Academy of Sciences)
+* [Zhenzhen Li](mailto:lizhenzhen1@iie.ac.cn) (SKLOIS, Institute of Information Engineering, Chinese Academy of Sciences)
+* [Boya Li](https://liboya-cb.github.io/) (SKLOIS, Institute of Information Engineering, Chinese Academy of Sciences)
 
 ## Features
 
