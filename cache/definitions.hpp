@@ -4,7 +4,6 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
-#include <string>
 
 //declarations
 class CacheBase;

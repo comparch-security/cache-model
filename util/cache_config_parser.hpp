@@ -2,7 +2,7 @@
 #define UTIL_ARGUMENT_PARSER_HPP_
 
 #include "cache/definitions.hpp"
-
+#include <string>
 const int MAX_CACHE_LEVEL = 2;
 
 struct CacheCFG {

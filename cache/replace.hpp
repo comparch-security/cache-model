@@ -6,6 +6,7 @@
 #include <vector>
 #include <unordered_set>
 #include <functional>
+#include <string>
 #include "util/random.hpp"
 
 ///////////////////////////////////

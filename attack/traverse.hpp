@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <list>
 #include <functional>
-#include <string>
 
 class L1CacheBase;
 

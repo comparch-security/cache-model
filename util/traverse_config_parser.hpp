@@ -2,7 +2,7 @@
 #define UTIL_TRAVERSE_PARSER_HPP_
 
 #include "attack/traverse.hpp"
-
+#include <string>
 struct TraverseTestCFG {
   std::string traverse_type;
   uint32_t ntests;

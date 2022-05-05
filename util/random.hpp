@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <unordered_set>
 #include <list>
-#include <string>
 
 // a 64-bit hash function using the 64-bit random number generator
 extern uint64_t hash(uint64_t);
