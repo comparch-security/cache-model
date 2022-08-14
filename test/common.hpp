@@ -35,9 +35,18 @@ void cache_init() {
   for(int i=0; i<ccfg.number[0]; i++)
     l1_caches[i] = new L1CacheBase(i, i, 0, ccfg.cache_gen[0], ccfg.enable[1] ? &l2_caches : NULL, ccfg.hash_gen[0]);
 
-  if(ccfg.enable[1]) {
-    for(int i=0; i<ccfg.number[1]; i++)
-      l2_caches[i] = new LLCCacheBase(i, 2, ccfg.cache_gen[1], &l1_caches);
+    if(level == 0) // L1 cache
+      for(int i=0; i < (*it)->size(); i++)
+        (**it)[i] = new L1CacheBase(i, i, 0, ccfg.cache_gen[level],  is_llc ? NULL : level_next, ccfg.hash_gen[level]);
+    else if(is_llc)
+      for(int i=0; i < (*it)->size(); i++)
+        (**it)[i] = new LLCCacheBase(i, level+1, ccfg.cache_gen[level], level_prev);
+    else
+      for(int i=0; i < (*it)->size(); i++)
+        (**it)[i] = new CoherentCache(i, level+1, -1, i, ccfg.cache_gen[level], level_prev, level_next, ccfg.hash_gen[level]);
+
+    it++;
+    level++;
   }
 
   random_seed_gen64();
