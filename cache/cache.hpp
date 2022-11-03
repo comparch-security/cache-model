@@ -181,7 +181,7 @@ public:
   }
   virtual void outer_flush_cache(uint64_t *latency, uint32_t id, int32_t levels) {
     for(auto oc: (*outer_caches))
-      oc->flush_cache(latency, id, levels);
+      oc->flush_cache(latency, levels, id);
   }
 
   virtual void outer_query_loc(uint64_t addr, std::list<LocInfo> *locs) {
