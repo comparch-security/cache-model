@@ -126,7 +126,7 @@ class DBAddrType : public CacheDB<AddrRecord> {
 public:
   virtual ~DBAddrType() {}
 
-  virtual void access(uint64_t id, uint32_t idx, uint32_t way) {
+  virtual void access(uint64_t id, int32_t idx, uint32_t way) {
     get(id)->a_map[idx].insert(way);
   }
 
@@ -141,7 +141,7 @@ public:
   uint32_t level;
   int32_t core_id;
   int32_t cache_id;
-  uint32_t idx;
+  int32_t idx;
   uint32_t way;
   StateRecord() : state(0) {}
 
@@ -164,7 +164,7 @@ public:
   virtual void set_state(uint64_t id, uint32_t s) { get(id)->state = s; }
   virtual bool is_state(uint64_t id, uint32_t s) const { return hit(id) && get(id)->state == s; }
   virtual bool is_hit(uint64_t id) const { return hit(id) && get(id)->state > 0; }
-  virtual void set_location(uint64_t id, uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way) {
+  virtual void set_location(uint64_t id, uint32_t level, int32_t core_id, int32_t cache_id, int32_t idx, uint32_t way) {
     auto record = get(id);
     record->level    = level;
     record->core_id  = core_id;
@@ -172,7 +172,7 @@ public:
     record->idx      = idx;
     record->way      = way;
   }
-  virtual bool get_location(uint64_t id, uint32_t *level, int32_t *core_id, int32_t *cache_id, uint32_t *idx, uint32_t *way) const {
+  virtual bool get_location(uint64_t id, uint32_t *level, int32_t *core_id, int32_t *cache_id, int32_t *idx, uint32_t *way) const {
     if(hit(id)) {
       auto record = get(id);
       *level    = record->level;
@@ -191,7 +191,7 @@ public:
 class DBAddrTraceType : public CacheDB<bool> {
 public:
   virtual ~DBAddrTraceType() {}
-  virtual void report(std::string msg, uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way, uint32_t state) {
+  virtual void report(std::string msg, uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t idx, uint32_t way, uint32_t state) {
     auto fmt = boost::format("0x%016x ") % addr;
     std::cout << fmt.str();
     fmt = boost::format(msg + " at level %1% core %2% cache %3% set %4% way %5% [%6%]") % level % core_id % cache_id % idx % way % state;
@@ -232,6 +232,53 @@ public:
   }
 };
 
+class DBSetDistMonitorType : public CacheDB<AccRecord> {
+  uint32_t nset;
+  uint64_t m_access;
+  uint64_t period;
+  std::list<set_dist_proc_t> processes;
+public:
+  DBSetDistMonitorType() : nset(0), m_access(0), period(0) {}
+
+  void set_param(uint32_t nset, uint64_t period) {
+    clear();
+    this->nset = nset;
+    this->period = period;
+  }
+
+  void add_process(set_dist_proc_t process) {
+    processes.push_back(process);
+  }
+
+  virtual void access(int32_t idx) {
+    m_access++;
+    get(idx)->n_access++;
+    if((m_access % period) == 0) {
+      std::vector<uint64_t> access_vec(nset, 0);
+      std::vector<uint64_t> evict_vec(nset, 0);
+      for(uint32_t i=0; i<nset; i++) {
+        auto r = get(i);
+        access_vec[i] = r->n_access;
+        evict_vec[i] = r->n_evict;
+      }
+      for(auto f:processes)
+        f(m_access, access_vec, evict_vec);
+      CacheDB<AccRecord>::clear();
+    }
+  }
+
+  virtual void evict(int32_t idx) {
+    get(idx)->n_evict++;
+  }
+
+  virtual void clear() {
+    CacheDB<AccRecord>::clear();
+    m_access = 0;
+  }
+
+  virtual ~DBSetDistMonitorType() {}
+};
+
 struct ReportDBs {
   std::unordered_map<uint64_t, DBAccType>   acc_dbs;     // record various access numbers
   std::unordered_map<uint64_t, DBAddrType>  addr_dbs;    // record the set/way pairs of an addr in a cache
@@ -245,7 +292,7 @@ Reporter_t::~Reporter_t() { delete dbs; }
 
 
 // register recorders
-void Reporter_t::register_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr, bool extra) {
+void Reporter_t::register_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, int32_t idx, uint64_t addr, bool extra) {
   uint64_t id;
   switch(tracer_depth) {
   case 0: id = hash(level); break;
@@ -288,7 +335,7 @@ void Reporter_t::register_tracer_generic(uint32_t tracer_type, uint32_t tracer_d
 }
 
 // remove a certain recorder
-void Reporter_t::remove_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) {
+void Reporter_t::remove_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, int32_t idx, uint64_t addr) {
   uint64_t id;
   switch(tracer_depth) {
   case 0: id = hash(level); break;
@@ -323,7 +370,7 @@ void Reporter_t::remove_tracer_generic(uint32_t tracer_type, uint32_t tracer_dep
 }
 
 // reset a certain recorder
-void Reporter_t::reset_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) {
+void Reporter_t::reset_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, int32_t idx, uint64_t addr) {
   uint64_t id;
   switch(tracer_depth) {
   case 0: id = hash(level); break;
@@ -367,7 +414,8 @@ void Reporter_t::clear() {
 }
 
   // event recorders
-void Reporter_t::cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way, uint32_t state, bool hit) {
+void Reporter_t::cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t idx, uint32_t way, uint32_t state, bool hit, uint8_t rw) {
+  if(paused) return;
   uint64_t record = addr_hash(addr);
   if(db_depth[0]) {
     uint64_t id = hash(level);
@@ -397,7 +445,8 @@ void Reporter_t::cache_access(uint32_t level, int32_t core_id, int32_t cache_id,
   }
 }
 
-void Reporter_t::cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way) {
+void Reporter_t::cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t idx, uint32_t way) {
+  if(paused) return;
   uint64_t record = addr_hash(addr);
   if(db_depth[0]) {
     uint64_t id = hash(level);
@@ -424,7 +473,8 @@ void Reporter_t::cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, 
   }
 }
 
-void Reporter_t::cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way) {
+void Reporter_t::cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t idx, uint32_t way) {
+  if(paused) return;
   uint64_t record = addr_hash(addr);
   if(db_depth[0]) {
     uint64_t id = hash(level);
@@ -452,7 +502,7 @@ bool Reporter_t::check_hit_generic(uint64_t id, uint64_t addr) const {
   return false;
 }
 
-bool Reporter_t::check_hit_generic(uint64_t id, uint64_t addr, uint32_t *level, int32_t *core_id, int32_t *cache_id, uint32_t *idx, uint32_t *way) const {
+bool Reporter_t::check_hit_generic(uint64_t id, uint64_t addr, uint32_t *level, int32_t *core_id, int32_t *cache_id, int32_t *idx, uint32_t *way) const {
   uint64_t record = addr_hash(addr);
   if(dbs->state_dbs.count(id)) {
     if(dbs->state_dbs.at(id).is_hit(record)) {
@@ -463,7 +513,7 @@ bool Reporter_t::check_hit_generic(uint64_t id, uint64_t addr, uint32_t *level, 
   return false;
 }
 
-bool Reporter_t::check_hit(uint32_t *level, int32_t *core_id, int32_t *cache_id, uint64_t addr, uint32_t *idx, uint32_t *way) const {
+bool Reporter_t::check_hit(uint32_t *level, int32_t *core_id, int32_t *cache_id, uint64_t addr, int32_t *idx, uint32_t *way) const {
   uint64_t record = addr_hash(addr);
   if(!dbs->state_dbs.empty()) {
     for(auto db: dbs->state_dbs)

@@ -4,7 +4,7 @@
 #include "cache/replace.hpp"
 #include <boost/format.hpp>
 
-std::string ReplaceFIFO::to_string(uint32_t set) const {
+std::string ReplaceFIFO::to_string(int32_t set) const {
   std::string rv;
   if(used_map.count(set)) {
     for(auto w : used_map.at(set)) rv += (boost::format("%1%, ") % w).str();
@@ -27,7 +27,7 @@ std::string ReplaceFIFO::to_string() const {
   return rv;
 }
 
-std::string ReplaceRRIP::to_string(uint32_t set) const {
+std::string ReplaceRRIP::to_string(int32_t set) const {
   std::string rv;
   if(rrpv_map.count(set))
     for(auto w : rrpv_map.at(set)) rv += (boost::format(" %1%") % w).str();

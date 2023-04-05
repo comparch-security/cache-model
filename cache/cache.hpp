@@ -26,14 +26,14 @@ protected:
 public:
   uint32_t level;      // cache level (L1, L2, L3)
   int32_t core_id;     // when private, record the core id, -1 means unified (LLC)
-  uint32_t cache_id;   // record the cache id in a core or just cache id when unified (LLC)
+  int32_t cache_id;   // record the cache id in a core or just cache id when unified (LLC)
   uint32_t nset, nway; // number of sets and ways
 
   CacheBase(uint32_t nset, uint32_t nway,
             indexer_creator_t ic,
             tagger_creator_t tc,
             replacer_creator_t rc,
-            uint32_t level, int32_t core_id, uint32_t cache_id,
+            uint32_t level, int32_t core_id, int32_t cache_id,
             uint32_t delay)
     : DelaySim(delay),
       indexer(ic(nset)), tagger(tc(nset)), replacer(rc(nset, nway)),
@@ -51,26 +51,27 @@ public:
     free(meta);
   }
 
-  virtual uint32_t get_index(uint64_t *latency, uint64_t addr) {
+  virtual int32_t get_index(uint64_t *latency, uint64_t addr) {
     return indexer->index(latency, addr);
   }
 
-  uint64_t get_meta(uint64_t *latency, uint32_t idx, uint32_t way) const {
+  uint64_t get_meta(uint64_t *latency, int32_t idx, uint32_t way) const {
     latency_acc(latency);
     return meta[nway * idx + way];
   }
 
-  void set_meta(uint64_t *latency, uint32_t idx, uint32_t way, uint64_t m_meta) {
+  void set_meta(uint64_t *latency, int32_t idx, uint32_t way, uint64_t m_meta) {
     latency_acc(latency);
     meta[nway * idx + way] = m_meta;
   }
 
   virtual bool hit(uint64_t addr) {
-    uint32_t idx, way;
+    int32_t idx;
+    uint32_t way;
     return hit(NULL, addr, &idx, &way);
   }
 
-  virtual bool hit(uint64_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way) {
+  virtual bool hit(uint64_t *latency, uint64_t addr, int32_t *idx, uint32_t *way) {
     *idx = get_index(latency, addr);
     for(unsigned int i=0; i<nway; i++) {
       uint64_t meta = get_meta(NULL, *idx, i);
@@ -82,13 +83,13 @@ public:
     return false;
   }
 
-  virtual uint32_t replace(uint64_t *latency, uint32_t idx) { return replacer->replace(latency, idx); }
-  virtual void access(uint32_t idx, uint32_t way)  { replacer->access(idx, way);    }
-  virtual void invalid(uint32_t idx, uint32_t way) { replacer->invalid(idx, way);   }
+  virtual uint32_t replace(uint64_t *latency, int32_t idx) { return replacer->replace(latency, idx); }
+  virtual void access(int32_t idx, uint32_t way)  { replacer->access(idx, way);    }
+  virtual void invalid(int32_t idx, uint32_t way) { replacer->invalid(idx, way);   }
 
   std::string cache_name() const;
-  virtual void query_block(uint32_t idx, uint32_t way, CBInfo *info) const;
-  virtual void query_set(uint32_t idx, SetInfo *info) const;
+  virtual void query_block(int32_t idx, uint32_t way, CBInfo *info) const;
+  virtual void query_set(int32_t idx, SetInfo *info) const;
   virtual bool query_coloc(uint64_t addrA, uint64_t addrB);
   virtual LocInfo query_loc(uint64_t addr);
 
@@ -98,7 +99,7 @@ public:
                             replacer_creator_t rc,
                             uint32_t level,
                             int32_t core_id,
-                            uint32_t cache_id,
+                            int32_t cache_id,
                             uint32_t delay
                             ) {
     return (CacheBase *)(new CacheBase(nset, nway, ic, tc, rc, level, core_id, cache_id, delay));
@@ -128,7 +129,7 @@ public:
   CoherentCache(uint32_t id,
                 uint32_t level,
                 int32_t core_id,
-                uint32_t cache_id,
+                int32_t cache_id,
                 cache_creator_t cc,
                 std::vector<CoherentCache *> *ic = NULL,
                 std::vector<CoherentCache *> *oc = NULL,
@@ -153,10 +154,10 @@ public:
   virtual void flush(uint64_t *latency, uint64_t addr, int32_t levels, uint32_t inner_id);
   virtual void flush_cache(uint64_t *latency, int32_t levels, uint32_t inner_id);
   virtual void probe(uint64_t *latency, uint64_t addr, bool invalid);
-  virtual void query_block(uint32_t idx, uint32_t way, CBInfo *info) const {
+  virtual void query_block(int32_t idx, uint32_t way, CBInfo *info) const {
     cache->query_block(idx, way, info);
   }
-  virtual void query_set(uint32_t idx, SetInfo *info) const {
+  virtual void query_set(int32_t idx, SetInfo *info) const {
     cache->query_set(idx, info);
   }
   virtual bool query_hit(uint64_t addr) { return cache->hit(CM::normalize(addr)); }
@@ -189,8 +190,8 @@ public:
   }
 
 protected:
-  virtual void replace(uint64_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way);
-  virtual void evict(uint64_t *latency, uint32_t idx, uint32_t way);
+  virtual void replace(uint64_t *latency, uint64_t addr, int32_t *idx, uint32_t *way);
+  virtual void evict(uint64_t *latency, int32_t idx, uint32_t way);
 };
 
 /////////////////////////////////
@@ -201,7 +202,7 @@ class L1CacheBase : public CoherentCache
 public:
   L1CacheBase(uint32_t id,
               int32_t core_id,
-              uint32_t cache_id,
+              int32_t cache_id,
               cache_creator_t cc,
               std::vector<CoherentCache *> *oc = NULL,
               llc_hash_creator_t hc = LLCHashNorm::gen()

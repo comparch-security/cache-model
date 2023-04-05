@@ -22,11 +22,11 @@ std::string CacheBase::cache_name() const {
   }
 }
 
-void CacheBase::query_block(uint32_t idx, uint32_t way, CBInfo *info) const {
+void CacheBase::query_block(int32_t idx, uint32_t way, CBInfo *info) const {
   *info = CBInfo(get_meta(NULL, idx, way));
 }
 
-void CacheBase::query_set(uint32_t idx, SetInfo *info) const {
+void CacheBase::query_set(int32_t idx, SetInfo *info) const {
   info->ways.resize(nway);
   for(int i=0; i<nway; i++) info->ways[i] = CBInfo(get_meta(NULL, idx, i));
 }
@@ -41,14 +41,15 @@ bool CacheBase::query_coloc(uint64_t addrA, uint64_t addrB) {
   return get_index(NULL, addrA) == get_index(NULL, addrB);
 }
 
-void CoherentCache::replace(uint64_t *latency, uint64_t addr, uint32_t *idx, uint32_t *way) {
+void CoherentCache::replace(uint64_t *latency, uint64_t addr, int32_t *idx, uint32_t *way) {
   *idx = cache->get_index(latency, addr);
   *way = cache->replace(latency, *idx);
   evict(latency, *idx, *way);
 }
 
 void CoherentCache::flush(uint64_t *latency, uint64_t addr, int32_t levels, uint32_t inner_id) {
-  uint32_t idx, way;
+  int32_t idx;
+  uint32_t way;
   addr = CM::normalize(addr);
   cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way))
@@ -58,17 +59,100 @@ void CoherentCache::flush(uint64_t *latency, uint64_t addr, int32_t levels, uint
 }
 
 void CoherentCache::flush_cache(uint64_t *latency, int32_t levels, uint32_t inner_id) {
-  for(uint32_t idx=0; idx<cache->nset; idx++)
+  for(int32_t idx=0; idx<cache->nset; idx++)
     for(uint32_t way=0; way<cache->nway; way++)
       evict(latency, idx, way);
   if(levels != 0 && outer_caches)
     outer_flush_cache(latency, id, levels-1);
 }
 
+void CoherentCache::remap() {
+  if(!(cache->indexer->get_type() == IndexFuncBase::RANDOM ||
+       cache->indexer->get_type() == IndexFuncBase::SKEW ))
+  {
+    return; // only work with RCL cache
+  }
+
+  reporter.pause(); // do not record during remap
+
+  /*
+  this->flush_cache(NULL, 0, 0);
+  if(cache->indexer->get_type() == IndexFuncBase::RANDOM)
+    static_cast<IndexRandom*>(cache->indexer)->reseed();
+  else if(cache->indexer->get_type() == IndexFuncBase::SKEW)
+    static_cast<IndexSkewed*>(cache->indexer)->reseed();
+  */
+
+  // if there are inner caches, fetch the latest value
+  if(inner_caches) {
+    for(int32_t idx = 0; idx < cache->nset; idx++) {
+      for(uint32_t way = 0; way < cache->nway; way++) {
+        uint64_t meta = cache->get_meta(NULL, idx, way);
+        if(CM::is_invalid(meta)) continue;
+        if(CM::is_modified(meta)) {
+          inner_probe(NULL, -1, CM::normalize(meta), -1, false, true);
+          cache->set_meta(NULL, idx, way, CM::to_shared(cache->get_meta(NULL, idx, way)));
+        }
+      }
+    }
+  }
+
+  // reseed the indexer
+  if(cache->indexer->get_type() == IndexFuncBase::RANDOM)
+    static_cast<IndexRandom*>(cache->indexer)->reseed();
+  else if(cache->indexer->get_type() == IndexFuncBase::SKEW)
+    static_cast<IndexSkewed*>(cache->indexer)->reseed();
+
+  // then we can safely do the remapping
+  std::unordered_set<uint64_t> remapped;
+  for(int32_t ridx = 0; ridx < cache->nset; ridx++) {
+    for(uint32_t rway = 0; rway < cache->nway; rway++) {
+      int32_t idx = ridx;
+      uint32_t way = rway;
+      uint64_t meta = cache->get_meta(NULL, idx, way);
+      uint64_t addr = CM::normalize(meta);
+
+      if(!CM::is_invalid(meta) && !remapped.count(addr)) {
+        cache->set_meta(NULL, idx, way, CM::to_invalid(meta));
+        cache->invalid(idx, way);        
+      }
+
+      while(!CM::is_invalid(meta) && !remapped.count(addr)) {
+        idx = cache->get_index(NULL, addr);
+        way = cache->replace(NULL, idx);
+        uint64_t mmeta = cache->get_meta(NULL, idx, way);
+        uint64_t maddr = CM::normalize(mmeta);
+
+        // invalidate all inner caches
+        if(inner_caches) {
+          inner_probe(NULL, -1, maddr, id, true, true);
+          mmeta = cache->get_meta(NULL, idx, way);
+        }
+
+        // write back if dirty
+        if(outer_caches && CM::is_dirty(mmeta)) {
+          outer_release(NULL, id, maddr);
+        }
+
+        cache->invalid(idx, way);
+        evict_event(maddr, idx, way);
+        cache->set_meta(NULL, idx, way, meta);
+        cache->access(idx, way);
+        remapped.insert(addr);
+
+        meta = mmeta;
+        addr = maddr;
+      }
+    }
+  }
+
+  reporter.resume();
+}
 
 void CoherentCache::read(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
   addr = CM::normalize(addr);
-  uint32_t idx, way;
+  int32_t idx;
+  uint32_t way;
   bool h = true;
   cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) { // hit
@@ -90,7 +174,8 @@ void CoherentCache::read(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
 
 void CoherentCache::write(uint64_t *latency, uint64_t addr, uint32_t inner_id, bool to_dirty) {
   addr = CM::normalize(addr);
-  uint32_t idx, way;
+  int32_t idx;
+  uint32_t way;
   bool h = true;
   cache->latency_acc(latency);
   uint64_t meta;
@@ -118,7 +203,8 @@ void CoherentCache::write(uint64_t *latency, uint64_t addr, uint32_t inner_id, b
 }
 
 void CoherentCache::probe(uint64_t *latency, uint64_t addr, bool invalid) {
-  uint32_t idx, way;
+  int32_t idx;
+  uint32_t way;
   cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) {
     if(inner_caches && (CM::is_modified(cache->get_meta(NULL, idx, way)) || invalid))
@@ -151,7 +237,7 @@ void CoherentCache::query_loc(uint64_t addr, std::list<LocInfo> *locs) {
   locs->front().wrapper = this;  // add a pointer for the CoherentCache wrapper
 }
 
-void CoherentCache::evict(uint64_t *latency, uint32_t idx, uint32_t way) {
+void CoherentCache::evict(uint64_t *latency, int32_t idx, uint32_t way) {
   uint64_t meta = cache->get_meta(NULL, idx, way);
   uint64_t addr = CM::normalize(meta);   // we know meta has the full address except for the lowest 6 bits
   if(!CM::is_invalid(meta)) {
@@ -172,7 +258,8 @@ void CoherentCache::evict(uint64_t *latency, uint32_t idx, uint32_t way) {
 }
 
 void CoherentCache::release(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
-  uint32_t idx, way;
+  int32_t idx;
+  uint32_t way;
   cache->latency_acc(latency);
   if(cache->hit(latency, addr, &idx, &way)) { // hit
     uint64_t meta = cache->get_meta(NULL, idx, way);
