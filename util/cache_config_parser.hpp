@@ -3,7 +3,8 @@
 
 #include "cache/definitions.hpp"
 #include <string>
-const int MAX_CACHE_LEVEL = 2;
+
+const int MAX_CACHE_LEVEL = 3;
 
 struct CacheCFG {
   bool enable[MAX_CACHE_LEVEL];
@@ -13,6 +14,7 @@ struct CacheCFG {
   // extra information needed for certain applications
   uint32_t nset[MAX_CACHE_LEVEL];
   uint32_t nway[MAX_CACHE_LEVEL];
+  uint32_t skew_partition[MAX_CACHE_LEVEL];
 };
 
 extern bool cache_config_parser(const std::string& fn, const std::string& cfg, CacheCFG *ccfg);

@@ -14,17 +14,12 @@ class IndexFuncBase : public DelaySim
 protected:
   const uint32_t imask;
 public:
-<<<<<<< HEAD
-  IndexFuncBase(uint32_t nset, uint32_t delay) : DelaySim(delay), imask(nset-1) {}
-  uint32_t virtual index(
-=======
   // typing the indexer
   enum indexer_t {BASE, NORM, RANDOM, SKEW};
   indexer_t get_type() const { return m_type; }
 
   IndexFuncBase(uint32_t nset, uint32_t delay, indexer_t t = BASE) : DelaySim(delay), imask(nset-1), m_type(t) {}
   int32_t virtual index(
->>>>>>> c573cf5 (Convert part of the uint32_t that needs to be converted to int32_t)
     uint64_t *latency,         // latency estimation
     uint64_t addr,             // address of the cache line
     int32_t skew_idx          // index of the skewed cache partition, default = 0
@@ -32,7 +27,10 @@ public:
   int32_t index(uint64_t *latency, uint64_t addr) {
     return index(latency, addr, 0);
   }
+
   virtual ~IndexFuncBase() {}
+protected:
+  const indexer_t m_type;
 };
 
 /////////////////////////////////
@@ -41,7 +39,7 @@ public:
 class IndexNorm : public IndexFuncBase
 {
 public:
-  IndexNorm(uint32_t nset, uint32_t delay) : IndexFuncBase(nset, delay) {}
+  IndexNorm(uint32_t nset, uint32_t delay) : IndexFuncBase(nset, delay, NORM) {}
 
   virtual int32_t index(uint64_t *latency, uint64_t addr, int32_t skew_idx) {
     latency_acc(latency);
@@ -60,8 +58,6 @@ public:
   }
 };
 
-<<<<<<< HEAD
-=======
 /////////////////////////////////
 // Random
 
@@ -133,7 +129,6 @@ public:
   }
 };
 
->>>>>>> c573cf5 (Convert part of the uint32_t that needs to be converted to int32_t)
 #undef CLog2
 
 #endif

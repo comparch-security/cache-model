@@ -6,10 +6,12 @@ CXXFLAGS = --std=c++11 -O2 -g -I. -fPIC
 TARGETS = \
 	test/cache-test \
 	test/test-eviction-tar-ran \
+	test/evset-effective \
 
 OBJECTS = \
 	cache/cache.o \
 	cache/replace.o \
+	cache/monitor.o \
 	attack/search.o \
 	attack/create.o \
 	attack/traverse.o \
@@ -17,6 +19,7 @@ OBJECTS = \
 	util/query.o \
 	util/random.o \
 	util/report.o \
+	util/detector.o \
 	util/cache_config_parser.o \
 	util/traverse_config_parser.o \
 
@@ -33,7 +36,7 @@ $(OBJECTS): %.o:%.cpp $(HEADERS)
 $(TARGETS): test/% : test/%.cpp $(OBJECTS) test/common.hpp datagen/librandomgen.a
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
-libcache_model.a: cache/replace.o cache/cache.o util/query.o util/random.o util/report.o util/cache_config_parser.o util/traverse_config_parser.o
+libcache_model.a: cache/replace.o cache/cache.o cache/monitor.o util/query.o util/random.o util/report.o util/detector.o util/cache_config_parser.o util/traverse_config_parser.o
 	ar rvs $@ $^
 
 clean:

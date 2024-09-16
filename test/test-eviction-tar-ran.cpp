@@ -24,12 +24,26 @@ int main(int argc, char* argv[]) {
   std::list<uint64_t> candidate;
   L1CacheBase *entry = (L1CacheBase *)l1_caches[0];
 
+  if(cache_level == 1) reporter.register_cache_access_tracer(1, 0, 0);
+  else                 reporter.register_cache_access_tracer(2);
+
+  CacheBase *target_cache = get_target_cache(0, entry, 2).cache;
+  reporter.register_set_dist_tracer(target_cache->level, target_cache->core_id, target_cache->cache_id);
+  reporter.set_set_dist_tracer(target_cache->level, target_cache->core_id, target_cache->cache_id, target_cache->nset, 1024*8);
+  std::list<std::vector<uint64_t> > x_access, x_evict;
+  std::list<std::vector<double> >   y_access, y_evict;
+  reporter.add_set_dist_monitor(target_cache->level, target_cache->core_id, target_cache->cache_id, set_dist_normal_acc_gen({1}, &x_access, &x_evict, {0.0}, &y_access, &y_evict, "set_dist_normal.csv"));
+  AbnormalSetDetector_t detector({0.96875}, target_cache->nset, target_cache->nway, target_cache->cache_name());
+  reporter.add_set_dist_monitor(target_cache->level, target_cache->core_id, target_cache->cache_id, detector.gen());
+ 
   for(uint32_t t=0; t<testN; t++) {
     uint64_t target = get_random_uint64(1ull << 60);
+    get_target_cache(target, entry, 2, true);
     candidate.clear();
-    reporter.clear();
-    if(cache_level == 1) reporter.register_cache_access_tracer(1, 0, 0);
-    else                 reporter.register_cache_access_tracer(2);
+
+    double start_access = (cache_level == 1) ?
+      (double)(reporter.check_cache_access(1, 0, 0)) :
+      (double)(reporter.check_cache_access(2)) ;
 
     set_hit_check_func(target, entry, cache_level, traverse_func);
 
@@ -48,8 +62,10 @@ int main(int argc, char* argv[]) {
       (double)(reporter.check_cache_access(2)) ;
 
     record_mean_stat(stat_mean_evict, evict_access - creation_access);
-    record_mean_stat(stat_mean_full,  evict_access);
+    record_mean_stat(stat_mean_full,  evict_access - start_access);
   }
+
+  detector.report();
 
   std::cout << candidate_size << "\t"
             << testN << "\t"

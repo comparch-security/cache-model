@@ -5,7 +5,7 @@
 #include <cstring>
 #include <string>
 #include "util/delay.hpp"
-#include "cache/definitions.hpp"
+#include "cache/monitor.hpp"
 #include "cache/replace.hpp"
 #include "cache/index.hpp"
 #include "cache/tag.hpp"
@@ -117,7 +117,7 @@ public:
 
 /////////////////////////////////
 // Coherent cache base
-class CoherentCache
+class CoherentCache : public CacheMonitorList
 {
 protected:
   uint32_t id;
@@ -136,7 +136,7 @@ public:
                 llc_hash_creator_t hc = LLCHashNorm::gen()
                 )
     : id(id), cache(cc(level, core_id, cache_id)),
-      inner_caches(ic), outer_caches(oc), hasher(hc(oc == NULL ? 0 : oc->size()))
+      inner_caches(ic), outer_caches(oc), hasher(hc(oc == NULL ? 1 : oc->size()))
   {}
 
   virtual ~CoherentCache() {
@@ -162,6 +162,9 @@ public:
   }
   virtual bool query_hit(uint64_t addr) { return cache->hit(CM::normalize(addr)); }
   virtual void query_loc(uint64_t addr, std::list<LocInfo>* locs);
+  const CacheBase &query_cache() const { return *cache; }
+
+  virtual void remap(); // only useful for RCL
 
   virtual void inner_probe(uint64_t *latency, uint32_t inner_id, uint64_t addr, uint32_t outer_id, bool invalidate, bool all) {
     for (uint32_t i=0; i<inner_caches->size(); i++)
@@ -178,7 +181,7 @@ public:
     (*outer_caches)[hasher->hash(addr)]->release(latency, addr, id);
   }
   virtual void outer_flush(uint64_t *latency, uint32_t id, uint64_t addr, int32_t levels) {
-    (*outer_caches)[hasher->hash(addr)]->flush(latency, addr, id, levels);
+    (*outer_caches)[hasher->hash(addr)]->flush(latency, addr, levels, id);
   }
   virtual void outer_flush_cache(uint64_t *latency, uint32_t id, int32_t levels) {
     for(auto oc: (*outer_caches))
@@ -212,20 +215,30 @@ public:
 
   virtual ~L1CacheBase() { }
 
-  // otherwise the virtual methods got hidden
-  using CoherentCache::read;
-  using CoherentCache::write;
-  using CoherentCache::flush;
-  using CoherentCache::flush_cache;
-
   void read(uint64_t addr)  { read(NULL, addr, 0);  }
   void write(uint64_t addr) { write(NULL, addr, 0, true); }
   void flush(uint64_t addr) { flush(NULL, addr, -1, 0); }
   void flush_cache()        { flush_cache(NULL, 0, 0); } // flush L1 by default
-  void read(uint64_t *latency, uint64_t addr)  { read(latency, addr, 0);  }
+  void read(uint64_t *latency, uint64_t addr)  { read(latency, addr, 0); }
   void write(uint64_t *latency, uint64_t addr) { write(latency, addr, 0, true); }
   void flush(uint64_t *latency, uint64_t addr) { flush(latency, addr, -1, 0); }
-  void flush_cache(uint64_t *latency)          { flush_cache(latency, 0, 0); } // flush L1 by default
+  void flush_cache(uint64_t *latency)          { flush_cache(latency, 0, 0); }
+  virtual void read(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
+    CoherentCache::read(latency, addr, inner_id);
+    CacheMonitorGlobalQueue::trigger();
+  }
+  virtual void write(uint64_t *latency, uint64_t addr, uint32_t inner_id, bool to_dirty) {
+    CoherentCache::write(latency, addr, inner_id, to_dirty);
+    CacheMonitorGlobalQueue::trigger();
+  }
+  virtual void flush(uint64_t *latency, uint64_t addr, int32_t levels, uint32_t inner_id) {
+    CoherentCache::flush(latency, addr, levels, inner_id);
+    CacheMonitorGlobalQueue::trigger();
+  }
+  virtual void flush_cache(uint64_t *latency, int32_t levels, uint32_t inner_id) {
+    CoherentCache::flush_cache(latency, levels, inner_id);
+    CacheMonitorGlobalQueue::trigger();
+  }
 };
 
 /////////////////////////////////

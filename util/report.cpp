@@ -36,11 +36,15 @@ public:
 class AccRecord {
 public:
   uint64_t n_access;
+  uint64_t n_read;
+  uint64_t n_write;
+  uint64_t n_read_miss;
+  uint64_t n_write_miss;
   uint64_t n_hit;
   uint64_t n_evict;
   uint64_t n_writeback;
 
-  AccRecord() : n_access(0), n_hit(0), n_evict(0), n_writeback(0) {}
+  AccRecord() : n_access(0), n_read(0), n_write(0), n_read_miss(0), n_write_miss(0), n_hit(0), n_evict(0), n_writeback(0) {}
   virtual std::string to_string() const {
     auto fmt = boost::format("hit %1%, evict %2% and writeback %3% in %4% accesses") % n_hit % n_evict % n_writeback % n_access;
     return fmt.str();
@@ -50,18 +54,41 @@ public:
 
 class DBAccType : public CacheDB<AccRecord> {
   uint64_t m_access;
+  uint64_t m_read;
+  uint64_t m_write;
+  uint64_t m_read_miss;
+  uint64_t m_write_miss;
   uint64_t m_hit;
   uint64_t m_evict;
   uint64_t m_writeback;
+  std::string fn;
+  uint64_t period;
+  uint64_t m_hit_pre;
 public:
   bool detailed_to_addr;
-  DBAccType() : m_access(0), m_hit(0), m_evict(0), m_writeback(0), detailed_to_addr(false) {}
-  virtual void access(uint64_t id, bool bhit, uint64_t *wt) {
-    if(detailed_to_addr) get(id)->n_access++;
-    m_access++;
-    if(bhit && detailed_to_addr) get(id)->n_hit++;
-    if(bhit) m_hit++;
+  DBAccType() : m_access(0), m_read(0), m_write(0), m_read_miss(0), m_write_miss(0),
+                m_hit(0), m_evict(0), m_writeback(0), period(0), m_hit_pre(0), detailed_to_addr(false) {}
+  virtual void access(uint64_t id, bool bhit, uint8_t rw, uint64_t *wt) {
+    if(detailed_to_addr) { get(id)->n_access++; if(rw == 1) get(id)->n_read++; if(rw == 2) get(id)->n_write++; }
+    m_access++; if(rw == 1) m_read++; if(rw == 2) m_write++;
+    if(bhit) { m_hit++; if(detailed_to_addr) get(id)->n_hit++; }
+    else {
+      if(rw == 1) { m_read_miss++;  if(detailed_to_addr) get(id)->n_read_miss++;  }
+      if(rw == 2) { m_write_miss++; if(detailed_to_addr) get(id)->n_write_miss++; }
+    }
 
+    // report
+    if(period != 0 && (m_access % period == 0)) {
+      std::ofstream ofile(fn, std::ios_base::app);
+      if(wt) ofile << *wt << ",";
+      ofile << m_access << "," << m_hit << "," << m_access - m_hit << ","
+            << m_evict << "," << m_writeback << ","
+            << (double)m_hit / m_access << ","
+            << (double)(m_hit - m_hit_pre) / period
+            << std::endl;
+      ofile.close();
+      m_hit_pre = m_hit;
+    }
   }
   virtual void evict(uint64_t id) {
     if(detailed_to_addr) get(id)->n_evict++;
@@ -71,24 +98,47 @@ public:
     if(detailed_to_addr) get(id)->n_writeback++;
     m_writeback++;
   }
-  virtual uint64_t get_access(uint64_t id) const { return hit(id) ? get(id)->n_access : 0; }
-  virtual uint64_t get_access() const            { return m_access; }
-  virtual uint64_t get_hit(uint64_t id) const    { return hit(id) ? get(id)->n_hit : 0; }
-  virtual uint64_t get_hit() const               { return m_hit; }
+
+  #define GET_FUNC(T)    virtual uint64_t get_##T() const            { return m_##T; }
+  #define GET_FUNC_ID(T) virtual uint64_t get_##T(uint64_t id) const { return hit(id) ? get(id)->n_##T : 0; }
+  GET_FUNC(access)
+  GET_FUNC_ID(access)
+  GET_FUNC(read)
+  GET_FUNC_ID(read)
+  GET_FUNC(write)
+  GET_FUNC_ID(write)
+  GET_FUNC(read_miss)
+  GET_FUNC_ID(read_miss)
+  GET_FUNC(write_miss)
+  GET_FUNC_ID(write_miss)
+  GET_FUNC(hit)
+  GET_FUNC_ID(hit)
+  GET_FUNC(evict)
+  GET_FUNC_ID(evict)
+  GET_FUNC(writeback)
+  GET_FUNC_ID(writeback)
+  #undef GET_FUNC
+  #undef GET_FUNC_ID
+
   virtual uint64_t get_miss(uint64_t id) const   { return hit(id) ? get(id)->n_access - get(id)->n_hit : 0; }
   virtual uint64_t get_miss() const              { return m_access - m_hit; }
-  virtual uint64_t get_evict(uint64_t id) const  { return hit(id) ? get(id)->n_evict : 0; }
-  virtual uint64_t get_evict() const             { return m_evict; }
-  virtual uint64_t get_writeback(uint64_t id) const  { return hit(id) ? get(id)->n_writeback : 0; }
-  virtual uint64_t get_writeback() const             { return m_writeback; }
+
   virtual void clear() {
     CacheDB<AccRecord>::clear();
     m_access = 0;
+    m_read = 0;
+    m_write = 0;
+    m_read_miss = 0;
+    m_write_miss = 0;
     m_hit = 0;
     m_evict = 0;
     m_writeback = 0;
   }
 
+  void set_reporter(const std::string &f, uint64_t p) {
+    period = p;
+    fn = f;
+  }
   virtual ~DBAccType() {}
 
   virtual std::string to_string(uint64_t id) const {
@@ -285,9 +335,14 @@ struct ReportDBs {
   std::unordered_map<uint64_t, DBStateType> state_dbs;   // record the coherent status of something
   DBAddrTraceType                           addr_traces; // trace a group of specific address of interests
   DBSetTraceType                            set_traces;  // trace a group of specific sets of interests
+  std::unordered_map<uint64_t, DBSetDistMonitorType> dist_dbs; // record distribution of sets
 };
 
-Reporter_t::Reporter_t() : dbs(new ReportDBs), db_depth(4, false), db_type(4, false) {}
+Reporter_t::Reporter_t()
+  : dbs(new ReportDBs),
+    wall_time(NULL),
+    db_depth(4, false), db_type(5, false),
+    paused(false) {}
 Reporter_t::~Reporter_t() { delete dbs; }
 
 
@@ -300,25 +355,28 @@ void Reporter_t::register_tracer_generic(uint32_t tracer_type, uint32_t tracer_d
   case 2: id = hash(level, core_id, cache_id); break;
   case 3: id = hash(level, core_id, cache_id, idx); break;
   default: id = 0; // should not run here
-}
+  }
   switch(tracer_type) {
   case 0: // access trace
-  assert(!dbs->acc_dbs.count(id));
-    dbs->acc_dbs[id].detailed_to_addr = extra;
-    db_depth[tracer_depth] = true;
-  db_type[0] = true;
+    if(!dbs->acc_dbs.count(id)) {
+      dbs->acc_dbs[id].detailed_to_addr = extra;
+      db_depth[tracer_depth] = true;
+      db_type[0] = true;
+    }
     break;
   case 1: // address trace
-  assert(!dbs->addr_dbs.count(id));
-  dbs->addr_dbs[id];
-    db_depth[tracer_depth] = true;
-  db_type[1] = true;
+    if(!dbs->addr_dbs.count(id)) {
+      dbs->addr_dbs[id];
+      db_depth[tracer_depth] = true;
+      db_type[1] = true;
+    }
     break;
   case 2: // state trace
-  assert(!dbs->state_dbs.count(id));
-  dbs->state_dbs[id];
-    db_depth[tracer_depth] = true;
-  db_type[2] = true;
+    if(!dbs->state_dbs.count(id)) {
+      dbs->state_dbs[id];
+      db_depth[tracer_depth] = true;
+      db_type[2] = true;
+    }
     break;
   case 3: // address/set monitor
     if(tracer_depth == 3) {
@@ -329,9 +387,28 @@ void Reporter_t::register_tracer_generic(uint32_t tracer_type, uint32_t tracer_d
     }
     db_type[3] = true;
     break;
+  case 4: // set distribution
+    if(!dbs->dist_dbs.count(id)) {
+      dbs->dist_dbs[id];
+      db_depth[tracer_depth] = true;
+      db_type[4] = true;
+    }
+    break;
   default:
     return; // should not run to here
   }
+}
+
+void Reporter_t::add_reporter_generic(uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, const std::string &fn, uint64_t period) {
+  uint64_t id;
+  switch(tracer_depth) {
+  case 0: id = hash(level); break;
+  case 1: id = hash(level, core_id); break;
+  case 2: id = hash(level, core_id, cache_id); break;
+  default: id = 0; // should not run here
+  }
+  assert(dbs->acc_dbs.count(id));
+  dbs->acc_dbs[id].set_reporter(fn, period);
 }
 
 // remove a certain recorder
@@ -364,6 +441,10 @@ void Reporter_t::remove_tracer_generic(uint32_t tracer_type, uint32_t tracer_dep
       dbs->addr_traces.clear(addr);
     }
     break;
+  case 4: // set distribution
+    assert(dbs->dist_dbs.count(id));
+    dbs->dist_dbs.erase(id);
+    break;
   default:
     return; // should not run to here
   }
@@ -392,6 +473,10 @@ void Reporter_t::reset_tracer_generic(uint32_t tracer_type, uint32_t tracer_dept
     assert(dbs->state_dbs.count(id));
     dbs->state_dbs[id].clear();
     break;
+  case 4: // set distribution
+    assert(dbs->dist_dbs.count(id));
+    dbs->dist_dbs[id].clear();
+    break;
   default:
     return; // should not run to here
   }
@@ -403,14 +488,16 @@ void Reporter_t::clear_addr_dbs()    { dbs->addr_dbs.clear();  db_type[1] = fals
 void Reporter_t::clear_state_dbs()   { dbs->state_dbs.clear(); db_type[2] = false; }
 void Reporter_t::clear_addr_traces() { dbs->addr_traces.clear();                   }
 void Reporter_t::clear_set_traces()  { dbs->set_traces.clear();                    }
+void Reporter_t::clear_distribution_traces() { dbs->dist_dbs.clear(); db_type[4] = false; }
 void Reporter_t::clear() {
   clear_acc_dbs();
   clear_addr_dbs();
   clear_state_dbs();
   clear_addr_traces();
   clear_set_traces();
+  clear_distribution_traces();
   db_depth = std::vector<bool>(4, false);
-  db_type = std::vector<bool>(4, false);
+  db_type = std::vector<bool>(5, false);
 }
 
   // event recorders
@@ -419,25 +506,26 @@ void Reporter_t::cache_access(uint32_t level, int32_t core_id, int32_t cache_id,
   uint64_t record = addr_hash(addr);
   if(db_depth[0]) {
     uint64_t id = hash(level);
-    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, wall_time);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, rw, wall_time);
     if(db_type[1] && dbs->addr_dbs.count(id))  dbs->addr_dbs[id].access(record, idx, way);
     if(db_type[2] && dbs->state_dbs.count(id)) dbs->state_dbs[id].set_state(record, state);
   }
   if(db_depth[1]) {
     uint64_t id = hash(level, core_id);
-    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, wall_time);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, rw, wall_time);
     if(db_type[1] && dbs->addr_dbs.count(id))  dbs->addr_dbs[id].access(record, idx, way);
     if(db_type[2] && dbs->state_dbs.count(id)) dbs->state_dbs[id].set_state(record, state);
   }
   if(db_depth[2]) {
     uint64_t id = hash(level, core_id, cache_id);
-    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, wall_time);
+    if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].access(record, hit, rw, wall_time);
     if(db_type[1] && dbs->addr_dbs.count(id))  dbs->addr_dbs[id].access(record, idx, way);
     if(db_type[2] && dbs->state_dbs.count(id)) dbs->state_dbs[id].set_state(record, state);
+    if(db_type[4] && dbs->dist_dbs.count(id))  dbs->dist_dbs[id].access(idx);
   }
   if(db_depth[3]) {
     uint64_t id = hash(level, core_id, cache_id, idx);
-    if(db_type[0] && dbs->acc_dbs.count(id))  dbs->acc_dbs[id].access(record, hit, wall_time);
+    if(db_type[0] && dbs->acc_dbs.count(id))  dbs->acc_dbs[id].access(record, hit, rw, wall_time);
     if(db_type[3] && dbs->set_traces.hit(id)) dbs->set_traces.access(id, addr);
   }
   if(db_type[3] && dbs->addr_traces.hit(addr)) {
@@ -462,6 +550,7 @@ void Reporter_t::cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, 
     uint64_t id = hash(level, core_id, cache_id);
     if(db_type[0] && dbs->acc_dbs.count(id))   dbs->acc_dbs[id].evict(record);
     if(db_type[2] && dbs->state_dbs.count(id)) dbs->state_dbs[id].set_state(record, 0);
+    if(db_type[4] && dbs->dist_dbs.count(id)) dbs->dist_dbs[id].evict(idx);
   }
   if(db_depth[3]) {
     uint64_t id = hash(level, core_id, cache_id, idx);
@@ -492,6 +581,24 @@ void Reporter_t::cache_writeback(uint32_t level, int32_t core_id, int32_t cache_
     uint64_t id = hash(level, core_id, cache_id, idx);
     if(db_type[0] && dbs->acc_dbs.count(id)) dbs->acc_dbs[id].writeback(record);
   }
+}
+
+bool Reporter_t::add_set_dist_monitor(uint32_t level, int32_t core_id, int32_t cache_id,
+                                      set_dist_proc_t process)
+{
+  uint64_t id = hash(level, core_id, cache_id);
+  if(!dbs->dist_dbs.count(id)) return false;
+  dbs->dist_dbs[id].add_process(process);
+  return true;
+}
+
+bool Reporter_t::set_set_dist_tracer(uint32_t level, int32_t core_id, int32_t cache_id,
+                                      uint32_t nset, uint64_t period)
+{
+  uint64_t id = hash(level, core_id, cache_id);
+  if(!dbs->dist_dbs.count(id)) return false;
+  dbs->dist_dbs[id].set_param(nset, period);
+  return true;
 }
 
 // event checkers
@@ -534,42 +641,22 @@ bool Reporter_t::check_hit(uint64_t addr) const {
   return false;
 }
 
-uint64_t Reporter_t::check_cache_access_generic(uint64_t id) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_access() : 0;
-}
+#define DEF_CHECK(T) \
+  uint64_t Reporter_t::check_cache_##T##_generic(uint64_t id) const { \
+    return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_##T() : 0; \
+  } \
+  uint64_t Reporter_t::check_addr_##T##_generic(uint64_t id, uint64_t addr) const { \
+    return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_##T(addr_hash(addr)) : 0; \
+  }
 
-uint64_t Reporter_t::check_addr_access_generic(uint64_t id, uint64_t addr) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_access(addr_hash(addr)) : 0;
-}
+DEF_CHECK(access)
+DEF_CHECK(read)
+DEF_CHECK(write)
+DEF_CHECK(read_miss)
+DEF_CHECK(write_miss)
+DEF_CHECK(hit)
+DEF_CHECK(miss)
+DEF_CHECK(evict)
+DEF_CHECK(writeback)
 
-uint64_t Reporter_t::check_cache_hit_generic(uint64_t id) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_hit() : 0;
-}
-
-uint64_t Reporter_t::check_addr_hit_generic(uint64_t id, uint64_t addr) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_hit(addr_hash(addr)) : 0;
-}
-
-uint64_t Reporter_t::check_cache_miss_generic(uint64_t id) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_miss() : 0;
-}
-
-uint64_t Reporter_t::check_addr_miss_generic(uint64_t id, uint64_t addr) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_miss(addr_hash(addr)) : 0;
-}
-
-uint64_t Reporter_t::check_cache_evict_generic(uint64_t id) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_evict() : 0;
-}
-
-uint64_t Reporter_t::check_addr_evict_generic(uint64_t id, uint64_t addr) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_evict(addr_hash(addr)) : 0;
-}
-
-uint64_t Reporter_t::check_cache_writeback_generic(uint64_t id) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_writeback() : 0;
-}
-
-uint64_t Reporter_t::check_addr_writeback_generic(uint64_t id, uint64_t addr) const {
-  return dbs->acc_dbs.count(id) ? dbs->acc_dbs.at(id).get_writeback(addr_hash(addr)) : 0;
-}
+#undef DEF_CHECK

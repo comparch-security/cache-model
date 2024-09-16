@@ -5,7 +5,8 @@
 #include <vector>
 #include <list>
 #include <functional>
-#include <string>
+#include "util/detector.hpp"
+
 class ReportDBs;
 
 class Reporter_t
@@ -57,19 +58,6 @@ class Reporter_t
   void remove_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, int32_t idx, uint64_t addr);
   void reset_tracer_generic(uint32_t tracer_type, uint32_t tracer_depth, uint32_t level, int32_t core_id, int32_t cache_id, int32_t idx, uint64_t addr);
   bool check_hit_generic(uint64_t id, uint64_t addr) const;
-<<<<<<< HEAD
-  bool check_hit_generic(uint64_t id, uint64_t addr, uint32_t *level, int32_t *core_id, int32_t *cache_id, uint32_t *idx, uint32_t *way) const;
-  uint64_t check_cache_access_generic(uint64_t id) const;
-  uint64_t check_addr_access_generic(uint64_t id, uint64_t addr) const;
-  uint64_t check_cache_hit_generic(uint64_t id) const;
-  uint64_t check_addr_hit_generic(uint64_t id, uint64_t addr) const;
-  uint64_t check_cache_miss_generic(uint64_t id) const;
-  uint64_t check_addr_miss_generic(uint64_t id, uint64_t addr) const;
-  uint64_t check_cache_evict_generic(uint64_t id) const;
-  uint64_t check_addr_evict_generic(uint64_t id, uint64_t addr) const;
-  uint64_t check_cache_writeback_generic(uint64_t id) const;
-  uint64_t check_addr_writeback_generic(uint64_t id, uint64_t addr) const;
-=======
   bool check_hit_generic(uint64_t id, uint64_t addr, uint32_t *level, int32_t *core_id, int32_t *cache_id, int32_t *idx, uint32_t *way) const;
 
   #define DEF_CHECK(T) \
@@ -87,10 +75,11 @@ class Reporter_t
   DEF_CHECK(writeback)
 
   #undef DEF_CHECK
->>>>>>> c573cf5 (Convert part of the uint32_t that needs to be converted to int32_t)
 
   std::vector<bool> db_depth;
   std::vector<bool> db_type;
+
+  bool paused;
 
 public:
   Reporter_t();
@@ -108,9 +97,6 @@ public:
   inline void register_cache_access_tracer(uint32_t level, int32_t core_id, int32_t cache_id, bool detailed_to_addr = false) {
     register_tracer_generic(0, 2, level, core_id, cache_id, 0, 0, detailed_to_addr);
   }
-<<<<<<< HEAD
-  inline void register_set_access_tracer(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, bool detailed_to_addr = false) {
-=======
   inline void add_cache_access_reporter(uint32_t level, const std::string &fn, uint64_t period) {
     add_reporter_generic(0, level, 0, 0, fn, period);
   }
@@ -121,12 +107,15 @@ public:
     add_reporter_generic(2, level, core_id, cache_id, fn, period);
   }
   inline void register_set_access_tracer(uint32_t level, int32_t core_id, int32_t cache_id, int32_t idx, bool detailed_to_addr = false) {
->>>>>>> c573cf5 (Convert part of the uint32_t that needs to be converted to int32_t)
     register_tracer_generic(0, 3, level, core_id, cache_id, idx, 0, detailed_to_addr);
   }
   inline void register_set_dist_tracer(uint32_t level, int32_t core_id, int32_t cache_id) {
     register_tracer_generic(4, 2, level, core_id, cache_id, 0, 0, false);
   }
+  bool set_set_dist_tracer(uint32_t level, int32_t core_id, int32_t cache_id,
+                           uint32_t nset, uint64_t period);
+  bool add_set_dist_monitor(uint32_t level, int32_t core_id, int32_t cache_id,
+                            set_dist_proc_t process);
   inline void register_cache_addr_tracer(uint32_t level) {
     register_tracer_generic(1, 0, level, 0, 0, 0, 0, false);
   }
@@ -228,24 +217,23 @@ public:
     reset_tracer_generic(2, 2, level, core_id, cache_id, 0, 0);
   }
 
+  // run-control
+  void pause()  { paused = true; }
+  void resume() { paused = false; }
+
   // clear recorders
   void clear_acc_dbs();
   void clear_addr_dbs();
   void clear_state_dbs();
   void clear_addr_traces();
   void clear_set_traces();
+  void clear_distribution_traces();
   void clear();
 
   // event recorders
-<<<<<<< HEAD
-  void cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way, uint32_t state, bool hit);
-  void cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way);
-  void cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, uint32_t idx, uint32_t way);
-=======
   void cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t idx, uint32_t way, uint32_t state, bool hit, uint8_t rw);
   void cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t idx, uint32_t way);
   void cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t idx, uint32_t way);
->>>>>>> c573cf5 (Convert part of the uint32_t that needs to be converted to int32_t)
 
   // event checkers
   inline bool check_hit(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr, int32_t *idx, uint32_t *way) const {
@@ -268,158 +256,6 @@ public:
     return check_hit_generic(hash(level), addr);
   }
   bool check_hit(uint64_t addr) const;
-<<<<<<< HEAD
-  inline uint64_t check_cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way) const {
-    return check_cache_access_generic(hash(level, core_id, cache_id, idx, way));
-  }
-  inline uint64_t check_cache_access(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx) const {
-    return check_cache_access_generic(hash(level, core_id, cache_id, idx));
-  }
-  inline uint64_t check_cache_access(uint32_t level, int32_t core_id, int32_t cache_id) const {
-    return check_cache_access_generic(hash(level, core_id, cache_id));
-  }
-  inline uint64_t check_cache_access(uint32_t level, int32_t core_id) const {
-    return check_cache_access_generic(hash(level, core_id));
-  }
-  inline uint64_t check_cache_access(uint32_t level) const {
-    return check_cache_access_generic(hash(level));
-  }
-  inline uint64_t check_addr_access(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way, uint64_t addr) const {
-    return check_addr_access_generic(hash(level, core_id, cache_id, idx, way), addr);
-  }
-  inline uint64_t check_addr_access(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) const {
-    return check_addr_access_generic(hash(level, core_id, cache_id, idx), addr);
-  }
-  inline uint64_t check_addr_access(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr) const {
-    return check_addr_access_generic(hash(level, core_id, cache_id), addr);
-  }
-  inline uint64_t check_addr_access(uint32_t level, int32_t core_id, uint64_t addr) const {
-    return check_addr_access_generic(hash(level, core_id), addr);
-  }
-  inline uint64_t check_addr_access(uint32_t level, uint64_t addr) const {
-    return check_addr_access_generic(hash(level), addr);
-  }
-  inline uint64_t check_cache_hit(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way) const {
-    return check_cache_hit_generic(hash(level, core_id, cache_id, idx, way));
-  }
-  inline uint64_t check_cache_hit(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx) const {
-    return check_cache_hit_generic(hash(level, core_id, cache_id, idx));
-  }
-  inline uint64_t check_cache_hit(uint32_t level, int32_t core_id, int32_t cache_id) const {
-    return check_cache_hit_generic(hash(level, core_id, cache_id));
-  }
-  inline uint64_t check_cache_hit(uint32_t level, int32_t core_id) const {
-    return check_cache_hit_generic(hash(level, core_id));
-  }
-  inline uint64_t check_cache_hit(uint32_t level) const {
-    return check_cache_hit_generic(hash(level));
-  }
-  inline uint64_t check_addr_hit(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way, uint64_t addr) const {
-    return check_addr_hit_generic(hash(level, core_id, cache_id, idx, way), addr);
-  }
-  inline uint64_t check_addr_hit(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) const {
-    return check_addr_hit_generic(hash(level, core_id, cache_id, idx), addr);
-  }
-  inline uint64_t check_addr_hit(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr) const {
-    return check_addr_hit_generic(hash(level, core_id, cache_id), addr);
-  }
-  inline uint64_t check_addr_hit(uint32_t level, int32_t core_id, uint64_t addr) const {
-    return check_addr_hit_generic(hash(level, core_id), addr);
-  }
-  inline uint64_t check_addr_hit(uint32_t level, uint64_t addr) const {
-    return check_addr_hit_generic(hash(level), addr);
-  }
-  inline uint64_t check_cache_miss(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way) const {
-    return check_cache_miss_generic(hash(level, core_id, cache_id, idx, way));
-  }
-  inline uint64_t check_cache_miss(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx) const {
-    return check_cache_miss_generic(hash(level, core_id, cache_id, idx));
-  }
-  inline uint64_t check_cache_miss(uint32_t level, int32_t core_id, int32_t cache_id) const {
-    return check_cache_miss_generic(hash(level, core_id, cache_id));
-  }
-  inline uint64_t check_cache_miss(uint32_t level, int32_t core_id) const {
-    return check_cache_miss_generic(hash(level, core_id));
-  }
-  inline uint64_t check_cache_miss(uint32_t level) const {
-    return check_cache_miss_generic(hash(level));
-  }
-  inline uint64_t check_addr_miss(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way, uint64_t addr) const {
-    return check_addr_miss_generic(hash(level, core_id, cache_id, idx, way), addr);
-  }
-  inline uint64_t check_addr_miss(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) const {
-    return check_addr_miss_generic(hash(level, core_id, cache_id, idx), addr);
-  }
-  inline uint64_t check_addr_miss(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr) const {
-    return check_addr_miss_generic(hash(level, core_id, cache_id), addr);
-  }
-  inline uint64_t check_addr_miss(uint32_t level, int32_t core_id, uint64_t addr) const {
-    return check_addr_miss_generic(hash(level, core_id), addr);
-  }
-  inline uint64_t check_addr_miss(uint32_t level, uint64_t addr) const {
-    return check_addr_miss_generic(hash(level), addr);
-  }
-  inline uint64_t check_cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way) const {
-    return check_cache_evict_generic(hash(level, core_id, cache_id, idx, way));
-  }
-  inline uint64_t check_cache_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx) const {
-    return check_cache_evict_generic(hash(level, core_id, cache_id, idx));
-  }
-  inline uint64_t check_cache_evict(uint32_t level, int32_t core_id, int32_t cache_id) const {
-    return check_cache_evict_generic(hash(level, core_id, cache_id));
-  }
-  inline uint64_t check_cache_evict(uint32_t level, int32_t core_id) const {
-    return check_cache_evict_generic(hash(level, core_id));
-  }
-  inline uint64_t check_cache_evict(uint32_t level) const {
-    return check_cache_evict_generic(hash(level));
-  }
-  inline uint64_t check_addr_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way, uint64_t addr) const {
-    return check_addr_evict_generic(hash(level, core_id, cache_id, idx, way), addr);
-  }
-  inline uint64_t check_addr_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) const {
-    return check_addr_evict_generic(hash(level, core_id, cache_id, idx), addr);
-  }
-  inline uint64_t check_addr_evict(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr) const {
-    return check_addr_evict_generic(hash(level, core_id, cache_id), addr);
-  }
-  inline uint64_t check_addr_evict(uint32_t level, int32_t core_id, uint64_t addr) const {
-    return check_addr_evict_generic(hash(level, core_id), addr);
-  }
-  inline uint64_t check_addr_evict(uint32_t level, uint64_t addr) const {
-    return check_addr_evict_generic(hash(level), addr);
-  }
-  inline uint64_t check_cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way) const {
-    return check_cache_writeback_generic(hash(level, core_id, cache_id, idx, way));
-  }
-  inline uint64_t check_cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx) const {
-    return check_cache_writeback_generic(hash(level, core_id, cache_id, idx));
-  }
-  inline uint64_t check_cache_writeback(uint32_t level, int32_t core_id, int32_t cache_id) const {
-    return check_cache_writeback_generic(hash(level, core_id, cache_id));
-  }
-  inline uint64_t check_cache_writeback(uint32_t level, int32_t core_id) const {
-    return check_cache_writeback_generic(hash(level, core_id));
-  }
-  inline uint64_t check_cache_writeback(uint32_t level) const {
-    return check_cache_writeback_generic(hash(level));
-  }
-  inline uint64_t check_addr_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint32_t way, uint64_t addr) const {
-    return check_addr_writeback_generic(hash(level, core_id, cache_id, idx, way), addr);
-  }
-  inline uint64_t check_addr_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint32_t idx, uint64_t addr) const {
-    return check_addr_writeback_generic(hash(level, core_id, cache_id, idx), addr);
-  }
-  inline uint64_t check_addr_writeback(uint32_t level, int32_t core_id, int32_t cache_id, uint64_t addr) const {
-    return check_addr_writeback_generic(hash(level, core_id, cache_id), addr);
-  }
-  inline uint64_t check_addr_writeback(uint32_t level, int32_t core_id, uint64_t addr) const {
-    return check_addr_writeback_generic(hash(level, core_id), addr);
-  }
-  inline uint64_t check_addr_writeback(uint32_t level, uint64_t addr) const {
-    return check_addr_writeback_generic(hash(level), addr);
-  }
-=======
 
   // access related checks
   #define CHECK_C_L5(T) \
@@ -490,7 +326,6 @@ public:
   #undef CHECK_A
   #undef CHECK_FUNC
 
->>>>>>> c573cf5 (Convert part of the uint32_t that needs to be converted to int32_t)
 };
 
 #endif

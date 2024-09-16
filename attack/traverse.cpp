@@ -49,6 +49,8 @@ uint32_t traverse_test_kernel(L1CacheBase *cache, const std::list<uint64_t>& evs
 {
   uint32_t success = 0;
   for(int i=0; i<ntests; i++) {
+    cache->flush(NULL, target, 0, 0);
+    for(auto c:evset) cache->flush(NULL, c, 0, 0);
     cache->read(target);
     for(int j=0; j<ntraverse; j++) traverse(cache, evset);
     if(!hit(target)) success++;

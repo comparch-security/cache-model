@@ -1,6 +1,6 @@
 #include "util/cache_config_parser.hpp"
 #include "util/json.hpp"
-#include "cache/cache.hpp"
+#include "cache/skewed.hpp"
 #include <iostream>
 #include <fstream>
 #include <boost/format.hpp>
@@ -18,8 +18,10 @@ class IndexCFGLoc {
 public:
   std::string ctype;
   uint32_t delay;
+  uint32_t rtable_size;
+  uint32_t partition;
   indexer_creator_t creator;
-  IndexCFGLoc(): ctype("norm"), delay(0), creator(IndexNorm::gen()) {}
+  IndexCFGLoc(): ctype("norm"), delay(0), rtable_size(0), partition(0), creator(IndexNorm::gen()) {}
 };
 
 void indexer_config_decoder(IndexCFGLoc *cfg, const json &db, const std::string &ctype, int t = 0) {
@@ -35,9 +37,13 @@ void indexer_config_decoder(IndexCFGLoc *cfg, const json &db, const std::string 
 
   obtain_config(cfg->ctype,       db, "indexer", ctype, "type"       );
   obtain_config(cfg->delay,       db, "indexer", ctype, "delay"      );
+  obtain_config(cfg->rtable_size, db, "indexer", ctype, "rtable_size");
+  obtain_config(cfg->partition,   db, "indexer", ctype, "partition"  );
 
   if(t == 0) { // the end of recursively calls
     if     (cfg->ctype == "norm"  ) cfg->creator = IndexNorm::gen(cfg->delay);
+    else if(cfg->ctype == "random") cfg->creator = IndexRandom::gen(cfg->rtable_size, cfg->delay);
+    else if(cfg->ctype == "skew"  ) cfg->creator = IndexSkewed::gen(cfg->partition, cfg->delay);
   }
 }
 
@@ -65,6 +71,7 @@ void tagger_config_decoder(TagCFGLoc *cfg, const json &db, const std::string &ct
 
   if(t == 0) { // the end of recursively calls
     if     (cfg->ctype == "norm"  ) cfg->creator = TagNorm::gen();
+    else if(cfg->ctype == "cbl"   ) cfg->creator = TagCBL::gen();
   }
 }
 
@@ -136,6 +143,7 @@ public:
   uint32_t number;
   uint32_t nset;
   uint32_t nway;
+  uint32_t partition;
   std::string indexer;
   std::string tagger;
   std::string replacer;
@@ -144,6 +152,7 @@ public:
   CacheCFGLoc()
     : ctype("norm"), delay(0),
       number(1), nset(64), nway(8),
+      partition(1),
       indexer("norm"), tagger("norm"), replacer("lru"), hasher("norm") {} 
 };
 
@@ -163,6 +172,7 @@ void cache_config_decoder(CacheCFGLoc *cfg, const json &db, const std::string &c
   obtain_config(cfg->number,   db, "cache", ctype, "number"   );
   obtain_config(cfg->nset,     db, "cache", ctype, "set"      );
   obtain_config(cfg->nway,     db, "cache", ctype, "way"      );
+  obtain_config(cfg->partition,db, "cache", ctype, "partition");
   obtain_config(cfg->indexer,  db, "cache", ctype, "indexer"  );
   obtain_config(cfg->tagger,   db, "cache", ctype, "tagger"   );
   obtain_config(cfg->replacer, db, "cache", ctype, "replacer" );
@@ -175,6 +185,8 @@ void cache_config_decoder(CacheCFGLoc *cfg, const json &db, const std::string &c
 
     if(cfg->ctype == "norm"  )
       cfg->creator = CacheBase::gen(cfg->nset, cfg->nway, index_config.creator, tag_config.creator, replace_config.creator, cfg->delay);
+    else if(cfg->ctype == "skew")
+      cfg->creator = SkewedCache::gen(cfg->nset, cfg->nway, index_config.creator, tag_config.creator, replace_config.creator, cfg->partition, cfg->delay);
   }
 }
 
@@ -197,7 +209,7 @@ bool cache_config_parser(const std::string& fn, const std::string& cfg, CacheCFG
 
   std::vector<std::string> cache_cfgs = db["config"][cfg].get< std::vector<std::string> >();
 
-  for(int level = 0; level < 2; level++) {
+  for(int level = 0; level < MAX_CACHE_LEVEL; level++) {
     if(level >= cache_cfgs.size()) {
       ccfg->enable[level] = false;
       continue;
@@ -214,6 +226,7 @@ bool cache_config_parser(const std::string& fn, const std::string& cfg, CacheCFG
 
     ccfg->nset[level] = cache_config.nset;
     ccfg->nway[level] = cache_config.nway;
+    ccfg->skew_partition[level] = cache_config.partition;
   }
 
   return true;

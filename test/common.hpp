@@ -1,7 +1,7 @@
 #ifndef CM_TEST_COMMON__HPP_
 #define CM_TEST_COMMON__HPP_
 
-#include "cache/cache.hpp"
+#include "cache/skewed.hpp"
 #include "attack/create.hpp"
 #include "attack/search.hpp"
 #include "util/report.hpp"
@@ -21,19 +21,27 @@ Reporter_t reporter;
 CacheCFG ccfg;
 TraverseTestCFG tcfg;
 
-std::vector<CoherentCache *>  l1_caches;
-std::vector<CoherentCache *>  l2_caches;
+typedef std::vector<CoherentCache *> cache_vector_t;
+cache_vector_t l1_caches;
+std::list<cache_vector_t *> all_caches;
 
 hit_func_t hit;
 check_func_t check;
 traverse_test_t traverse;
 
 void cache_init() {
-  l1_caches.resize(ccfg.number[0]);
-  if(ccfg.enable[1]) l2_caches.resize(ccfg.number[1]);
+  for(int level=0; level < MAX_CACHE_LEVEL; level++)
+    if(ccfg.enable[level]) all_caches.push_back(new cache_vector_t(ccfg.number[level]));
 
-  for(int i=0; i<ccfg.number[0]; i++)
-    l1_caches[i] = new L1CacheBase(i, i, 0, ccfg.cache_gen[0], ccfg.enable[1] ? &l2_caches : NULL, ccfg.hash_gen[0]);
+  auto it = all_caches.begin();
+  int level = 0;
+  while(it != all_caches.end()) {
+    bool is_l1  = level == 0;
+    bool is_llc = (level <= MAX_CACHE_LEVEL - 1) && (ccfg.enable[level+1] == false);
+    auto it_prev = it; if(!is_l1)  --it_prev;
+    auto it_next = it; if(!is_llc) ++it_next;
+    cache_vector_t *level_prev = is_l1  ? NULL : *it_prev;
+    cache_vector_t *level_next = is_llc ? NULL : *it_next;
 
     if(level == 0) // L1 cache
       for(int i=0; i < (*it)->size(); i++)
@@ -49,12 +57,15 @@ void cache_init() {
     level++;
   }
 
+  l1_caches = *(all_caches.front());
   random_seed_gen64();
 }
 
 void cache_release() {
-  for(int i=0; i<ccfg.number[0]; i++) delete l1_caches[i];
-  if(ccfg.enable[1]) for(int i=0; i<ccfg.number[1]; i++) delete l2_caches[i];
+  for(auto& l : all_caches) {
+    for(auto& c : *l) delete c;
+    delete l;
+  }
 }
 
 LocInfo get_target_cache(uint64_t addr, L1CacheBase *cache, uint32_t level, bool print = false) {

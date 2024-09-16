@@ -168,8 +168,9 @@ void CoherentCache::read(uint64_t *latency, uint64_t addr, uint32_t inner_id) {
     cache->set_meta(latency, idx, way, CM::to_shared(addr));
   }
   cache->access(idx, way);
+  access_event(addr, idx, way);
   reporter.cache_access(cache->level, cache->core_id, cache->cache_id,
-                        addr, idx, way, 1, h);
+                        addr, idx, way, 1, h, 1);
 }
 
 void CoherentCache::write(uint64_t *latency, uint64_t addr, uint32_t inner_id, bool to_dirty) {
@@ -198,8 +199,9 @@ void CoherentCache::write(uint64_t *latency, uint64_t addr, uint32_t inner_id, b
   if(to_dirty) meta = CM::to_dirty(meta);
   cache->set_meta(latency, idx, way, meta);
   cache->access(idx, way);
+  access_event(addr, idx, way);
   reporter.cache_access(cache->level, cache->core_id, cache->cache_id,
-                        addr, idx, way, 2, h);
+                        addr, idx, way, 2, h, 2);
 }
 
 void CoherentCache::probe(uint64_t *latency, uint64_t addr, bool invalid) {
@@ -219,14 +221,16 @@ void CoherentCache::probe(uint64_t *latency, uint64_t addr, bool invalid) {
     if(invalid) {
       cache->set_meta(latency, idx, way, CM::to_invalid(meta));
       cache->invalid(idx, way);
+      evict_event(addr, idx, way);
       reporter.cache_evict(cache->level, cache->core_id, cache->cache_id,
                            addr, idx, way);
     } else {
       cache->set_meta(latency, idx, way, CM::to_shared(meta));
       cache->access(idx, way);
     }
+    access_event(addr, idx, way);
     reporter.cache_access(cache->level, cache->core_id, cache->cache_id,
-                          addr, idx, way, 1, true);
+                          addr, idx, way, 1, true, 0);
   }
 }
 
@@ -242,7 +246,7 @@ void CoherentCache::evict(uint64_t *latency, int32_t idx, uint32_t way) {
   uint64_t addr = CM::normalize(meta);   // we know meta has the full address except for the lowest 6 bits
   if(!CM::is_invalid(meta)) {
     if(inner_caches)
-    inner_probe(latency, -1, addr, id, true, true);
+      inner_probe(latency, -1, addr, id, true, true);
     meta = cache->get_meta(NULL, idx, way); // always get a new meta after probes
     if(CM::is_dirty(meta)) {
       if(outer_caches) outer_release(latency, id, addr);
@@ -252,6 +256,7 @@ void CoherentCache::evict(uint64_t *latency, int32_t idx, uint32_t way) {
     }
     cache->set_meta(latency, idx, way, CM::to_invalid(meta));
     cache->invalid(idx, way);
+    evict_event(addr, idx, way);
     reporter.cache_evict(cache->level, cache->core_id, cache->cache_id,
                          addr, idx, way);
   }
@@ -271,6 +276,7 @@ void CoherentCache::release(uint64_t *latency, uint64_t addr, uint32_t inner_id)
     throw(addr);
   }
   cache->access(idx, way);
+  access_event(addr, idx, way);
   reporter.cache_access(cache->level, cache->core_id, cache->cache_id,
-                        addr, idx, way, 1, true);
+                        addr, idx, way, 1, true, 2);
 }

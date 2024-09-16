@@ -9,7 +9,7 @@ std::string CBInfo::to_string() const {
   if(shared()) state = "S";
   if(modified()) state = "M";
   if(dirty()) state += "(D)";
-  auto fmt = boost::format("0x%016x %2%") % addr() % state;
+  auto fmt = boost::format("0x%016x %s") % addr() % state;
   return fmt.str();
 }
 

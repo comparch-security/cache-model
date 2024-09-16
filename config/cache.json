@@ -9,12 +9,34 @@
         "L2_1024x8"  : ["1x64x8", "1x1024x8"],
         "L2_1024x12" : ["1x64x8", "1x1024x12"],
         "L2_1024x16" : ["1x64x8", "1x1024x16"],
+        "L2_1024x16_D" : ["1x64x8-d", "1x1024x16-d"],
         "L2_1024x20" : ["1x64x8", "1x1024x20"],
         "L2_2048x4"  : ["1x64x8", "1x2048x4"],
+        "L2_1024x16_RCL"    : ["1x64x8", "RCL_1x1024x16"],
         "L2_1024x16_LRU"    : ["1x64x8", "LRU_1x1024x16"],
         "L2_1024x16_RANDOM" : ["1x64x8", "RANDOM_1x1024x16"],
         "L2_1024x16_RRIP"   : ["1x64x8", "RRIP_1x1024x16"],
-        "spike-default"     : ["2x64x8", "1x1024x16"]
+        "L2_1024x16_RCL_D"    : ["1x64x8-d", "RCL_1x1024x16-d"],
+        "L2_1024x16_LRU_D"    : ["1x64x8-d", "LRU_1x1024x16-d"],
+        "L2_1024x16_RANDOM_D" : ["1x64x8-d", "RANDOM_1x1024x16-d"],
+        "L2_1024x16_RRIP_D"   : ["1x64x8-d", "RRIP_1x1024x16-d"],
+        "skewed_L2_512x16"  : ["1x64x8", "skewed_1x512x16"],
+        "skewed_L2_1024x8"  : ["1x64x8", "skewed_1x1024x8"],
+        "skewed_L2_1024x12" : ["1x64x8", "skewed_1x1024x12"],
+        "skewed_L2_1024x16" : ["1x64x8", "skewed_1x1024x16"],
+        "skewed_L2_1024x20" : ["1x64x8", "skewed_1x1024x20"],
+        "skewed_L2_2048x4"  : ["1x64x8", "skewed_1x2048x4"],
+        "skewed_L2_1024x16_D" : ["1x64x8-d", "skewed_1x1024x16-d"],
+        "spike-default"       : ["2x64x8", "1x1024x16"],
+        "spike-RCL"           : ["2x64x8", "RCL_1x1024x16"],
+        "spike-skew2"         : ["2x64x8", "skew2_1x1024x16"],
+        "spike-skew4"         : ["2x64x8", "skew4_1x1024x16"],
+        "spike-skew8"         : ["2x64x8", "skew8_1x1024x16"],
+        "spike-skew16"        : ["2x64x8", "skew16_1x1024x16"],
+        "spike-2core"         : ["4x64x8", "1x1024x16"],
+        "spike-4core"         : ["8x64x8", "1x1024x16"],
+        "spike-4core-2M"      : ["8x64x8", "2x1024x16"],
+        "spike-4core-4M-d"      : ["8x64x8-d", "4x1024x16-d"]
     },
     "cache": {
         "1x64x8": {
@@ -40,20 +62,75 @@
         "1x1024x12":   { "base": "1x1024x16", "way": 12  },
         "1x1024x20":   { "base": "1x1024x16", "way": 20  },
         "1x2048x4" :   { "base": "1x1024x16", "set": 2048, "way": 4},
+        "1x64x8-d":    { "base": "1x64x8",    "delay": 10},
+        "8x64x8-d":      { "base": "1x64x8-d",    "number": 8},
+        "1x1024x16-d": { "base": "1x1024x16", "delay": 50},
+        "4x1024x16-d":   { "base": "1x1024x16-d", "number": 4},
+        "RCL_1x1024x16"    : { "base": "1x1024x16", "indexer"  : "random" },
         "LRU_1x1024x16"    : { "base": "1x1024x16", "replacer" : "norm"   },
         "RANDOM_1x1024x16" : { "base": "1x1024x16", "replacer" : "random" },
         "RRIP_1x32x8"      : { "base": "1x32x8",    "replacer" : "rrip"   },
-        "RRIP_1x1024x16"   : { "base": "1x1024x16", "replacer" : "rrip"   }
+        "RRIP_1x1024x16"   : { "base": "1x1024x16", "replacer" : "rrip"   },
+        "RCL_1x1024x16-d"    : { "base": "RCL_1x1024x16",    "delay": 50},
+        "LRU_1x1024x16-d"    : { "base": "LRU_1x1024x16",    "delay": 50},
+        "RANDOM_1x1024x16-d" : { "base": "RANDOM_1x1024x16", "delay": 50},
+        "RRIP_1x1024x16-d"   : { "base": "RRIP_1x1024x16",   "delay": 50},
+        "skewed_1x1024x16" : {
+            "base"       : "1x1024x16",
+            "type"       : "skew",
+            "indexer"    : "skew4",
+            "tagger"     : "cbl",
+            "partition"  : 4
+        },
+        "skewed_1x512x16":  { "base": "skewed_1x1024x16", "set": 512 },
+        "skewed_1x1024x8":  { "base": "skewed_1x1024x16", "way": 8   },
+        "skewed_1x1024x12": { "base": "skewed_1x1024x16", "way": 12  },
+        "skewed_1x1024x20": { "base": "skewed_1x1024x16", "way": 20  },
+        "skewed_1x2048x4":  { "base": "skewed_1x1024x16", "way": 4, "set": 2048 },
+        "skewed_1x1024x16-d" : {"base": "skewed_1x1024x16", "delay": 50},
+        "skew2_1x1024x16": {"base": "skewed_1x1024x16", "partition": 2, "indexer": "skew2"},
+        "skew4_1x1024x16": {"base": "skewed_1x1024x16", "partition": 4, "indexer": "skew4"},
+        "skew8_1x1024x16": {"base": "skewed_1x1024x16", "partition": 8, "indexer": "skew8"},
+        "skew16_1x1024x16": {"base": "skewed_1x1024x16", "partition": 16, "indexer": "skew16"}
     },
     "indexer": {
         "norm": {
             "type"  : "norm",
             "delay" : 0
+        },
+        "random": {
+            "type"        : "random",
+            "rtable_size" : 10,
+            "delay"       : 0
+        },
+        "skew2": {
+            "type"      : "skew",
+            "partition" : 2,
+            "delay"     : 0
+        },        
+        "skew4": {
+            "type"      : "skew",
+            "partition" : 4,
+            "delay"     : 0
+        },
+        "skew8": {
+            "type"      : "skew",
+            "partition" : 8,
+            "delay"     : 0
+        },
+        "skew16": {
+            "type"      : "skew",
+            "partition" : 16,
+            "delay"     : 0
         }
     },
     "tagger": {
         "norm": {
             "type"  : "norm",
+            "delay" : 0
+        },
+        "cbl": {
+            "type"  : "cbl",
             "delay" : 0
         }
     },

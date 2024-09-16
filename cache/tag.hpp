@@ -42,5 +42,26 @@ public:
   }
 };
 
+/////////////////////////////////
+// cache block level tag compare
+
+class TagCBL : public TagFuncBase
+{
+public:
+  TagCBL(uint32_t nset) : TagFuncBase(nset) {}
+  virtual uint64_t tag(uint64_t addr) { return addr >> 6; }
+
+  virtual ~TagCBL() {}
+
+  static TagFuncBase *factory(uint32_t nset) {
+    return (TagFuncBase *)(new TagCBL(nset));
+  }
+
+  static tagger_creator_t gen() {
+    using namespace std::placeholders;
+    return std::bind(factory, _1);
+  }
+};
+
 #undef CLog2
 #endif
